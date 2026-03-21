@@ -1,0 +1,178 @@
+{
+  "project_identity": {
+    "name": "Fintech Glass Dashboard",
+    "persona": "E1: Neo-Glass Fintech",
+    "tone": "Trustworthy, Futuristic, Crystal Clear, Wealth-Focused",
+    "description": "A high-end financial command center combining the solidity of Swiss design with the ethereal depth of glassmorphism. It feels like handling physical crystal interfaces."
+  },
+  "typography": {
+    "font_family": {
+      "headings": "Manrope, sans-serif",
+      "body": "Plus Jakarta Sans, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight",
+      "h2": "text-3xl md:text-4xl font-bold tracking-tight",
+      "h3": "text-2xl font-bold tracking-tight",
+      "h4": "text-xl font-semibold tracking-normal",
+      "body_lg": "text-lg leading-relaxed",
+      "body_base": "text-base leading-relaxed",
+      "caption": "text-sm text-muted-foreground",
+      "mono_lg": "font-mono text-lg tracking-wide",
+      "mono_base": "font-mono text-base tracking-wide"
+    },
+    "rules": [
+      "Use 'Manrope' for all major headings to establish character.",
+      "Use 'JetBrains Mono' for ALL currency values, stock prices, and crypto addresses.",
+      "Never use 'Inter' for headings.",
+      "Headings must be 'tracking-tight' to feel solid."
+    ]
+  },
+  "colors": {
+    "palette": {
+      "light": {
+        "background": "#F0F2F5",
+        "card": "rgba(255, 255, 255, 0.65)",
+        "card_border": "rgba(255, 255, 255, 0.4)",
+        "text_primary": "#0F172A",
+        "text_secondary": "#64748B",
+        "primary": "#6366F1",
+        "success": "#10B981",
+        "danger": "#EF4444"
+      },
+      "dark": {
+        "background": "#020408",
+        "card": "rgba(18, 18, 23, 0.6)",
+        "card_border": "rgba(255, 255, 255, 0.08)",
+        "text_primary": "#F8FAFC",
+        "text_secondary": "#94A3B8",
+        "primary": "#818CF8",
+        "success": "#34D399",
+        "danger": "#F87171"
+      }
+    },
+    "gradients": {
+      "primary": "bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500",
+      "glass_surface": "backdrop-blur-xl bg-white/10 dark:bg-black/20",
+      "glass_border": "border border-white/20 dark:border-white/10"
+    },
+    "functional": {
+      "income": "text-emerald-600 dark:text-emerald-400",
+      "expense": "text-rose-600 dark:text-rose-400",
+      "crypto_up": "text-green-500",
+      "crypto_down": "text-red-500"
+    },
+    "forbidden_colors": ["#1B93A4", "#7351B7"]
+  },
+  "layout_strategies": {
+    "dashboard_grid": "grid grid-cols-1 md:grid-cols-12 gap-6 p-4 md:p-8",
+    "bento_grid_rules": [
+      "Hero Stats: col-span-12 md:col-span-8 lg:col-span-9",
+      "Side Panel: col-span-12 md:col-span-4 lg:col-span-3",
+      "Chart Area: col-span-12 md:col-span-6 lg:col-span-8 row-span-2",
+      "List Feed: col-span-12 md:col-span-6 lg:col-span-4 row-span-2"
+    ],
+    "spacing": {
+      "container_padding": "p-4 md:p-8 lg:p-12",
+      "card_padding": "p-6",
+      "section_gap": "gap-8"
+    },
+    "z_index": {
+      "glass_overlay": "z-50",
+      "sticky_header": "z-40",
+      "content": "z-10",
+      "background_decor": "z-0"
+    }
+  },
+  "component_guidelines": {
+    "cards": {
+      "style": "glass",
+      "classes": "rounded-2xl border border-white/20 dark:border-white/10 bg-white/60 dark:bg-gray-900/40 backdrop-blur-xl shadow-lg hover:shadow-xl transition-all duration-300",
+      "interaction": "hover:-translate-y-1 hover:border-primary/50"
+    },
+    "buttons": {
+      "primary": "rounded-full px-8 py-3 bg-primary text-primary-foreground font-semibold shadow-lg hover:shadow-primary/25 transition-all active:scale-95",
+      "secondary": "rounded-full px-8 py-3 bg-white/10 dark:bg-white/5 border border-white/10 backdrop-blur-md hover:bg-white/20 transition-all active:scale-95",
+      "icon": "rounded-full p-2 hover:bg-white/10 transition-colors"
+    },
+    "inputs": {
+      "style": "glass_field",
+      "classes": "bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-gray-800 focus:ring-2 focus:ring-primary/50 rounded-xl px-4 py-3 outline-none transition-all backdrop-blur-sm placeholder:text-muted-foreground"
+    },
+    "navigation": {
+      "sidebar": "fixed left-0 top-0 h-full w-20 lg:w-64 border-r border-border bg-background/80 backdrop-blur-xl z-50 hidden md:flex flex-col",
+      "mobile_nav": "fixed bottom-0 w-full border-t border-border bg-background/90 backdrop-blur-xl z-50 md:hidden flex justify-around p-4"
+    }
+  },
+  "visual_enhancers": {
+    "noise_texture": "Use a subtle SVG noise overlay with 2-3% opacity on solid backgrounds to prevent banding.",
+    "gradients": "Do NOT use full-screen gradients. Use 'Orbs' or 'Blobs' of color (Indigo/Purple) that float in the background with 'blur-3xl'.",
+    "borders": "Use 'Tracing Beam' effect for active states or high-value cards.",
+    "rupee_symbol": "Display '₹' prominently using the 'Manrope' font weight 700. Do NOT use standard system fonts for currency."
+  },
+  "images": {
+    "hero_background": {
+      "url": "https://images.unsplash.com/photo-1754738381739-5efb94a4525b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHw0fHxhYnN0cmFjdCUyMGdsYXNzbW9ycGhpc20lMjBnZW9tZXRyaWMlMjBzaGFwZXMlMjBuZW9uJTIwYmx1ZSUyMHB1cnBsZXxlbnwwfHx8fDE3NzQwMDU3OTN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Abstract Glassmorphism Background",
+      "category": "background"
+    },
+    "auth_illustration": {
+      "url": "https://images.unsplash.com/photo-1612189459328-13f9d03623b6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMGdsYXNzbW9ycGhpc20lMjBnZW9tZXRyaWMlMjBzaGFwZXMlMjBuZW9uJTIwYmx1ZSUyMHB1cnBsZXxlbnwwfHx8fDE3NzQwMDU3OTN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Futuristic Auth Visual",
+      "category": "illustration"
+    },
+    "user_avatar": {
+      "url": "https://images.pexels.com/photos/7580937/pexels-photo-7580937.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "User Profile",
+      "category": "avatar"
+    },
+    "crypto_icon": {
+      "url": "https://images.unsplash.com/photo-1642131449810-4960a9de20ce?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxNzV8MHwxfHNlYXJjaHwzfHxiaXRjb2luJTIwZXRoZXJldW0lMjAzZCUyMGljb24lMjBnb2xkJTIwc2lsdmVyfGVufDB8fHx8MTc3NDAwNTc5NXww&ixlib=rb-4.1.0&q=85",
+      "alt": "Crypto Coin",
+      "category": "icon"
+    },
+    "stock_chart_preview": {
+      "url": "https://images.pexels.com/photos/7567223/pexels-photo-7567223.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Stock Market Chart",
+      "category": "preview"
+    },
+    "scanner_demo": {
+      "url": "https://images.unsplash.com/photo-1654263736203-a289f57c0d82?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2MzR8MHwxfHNlYXJjaHwxfHxzbWFydHBob25lJTIwc2Nhbm5pbmclMjByZWNlaXB0JTIwcXIlMjBjb2RlJTIwY2xvc2UlMjB1cHxlbnwwfHx8fDE3NzQwMDU3OTd8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Receipt Scanning Demo",
+      "category": "demo"
+    }
+  },
+  "libraries": {
+    "charts": "recharts",
+    "animations": "framer-motion",
+    "icons": "lucide-react",
+    "toast": "sonner",
+    "date_handling": "date-fns",
+    "webcam": "react-webcam",
+    "ocr": "tesseract.js"
+  },
+  "accessibility": {
+    "contrast": "Ensure text opacity is at least 90% on glass backgrounds.",
+    "focus_states": "All interactive elements must have a visible ring-2 ring-primary focus state.",
+    "screen_readers": "Use aria-labels on icon-only buttons (like the Scanner button)."
+  },
+  "instructions_to_main_agent": [
+    "Implement a 'ThemeToggle' immediately that switches 'class=\"dark\"' on the HTML tag.",
+    "Use 'react-webcam' for the Scanner Page. Create an overlay with a scanning animation using Framer Motion.",
+    "For the 'Markets' page, create a mock real-time ticker if API limits are hit.",
+    "The 'Telegram Bot' integration should be a Settings page section where users get a 'Connect' button or a QR code to link their account.",
+    "Use 'recharts' for the Income/Expense graphs. Style the grid lines to be barely visible (stroke='#333' opacity={0.1}).",
+    "Ensure the 'Rupee' symbol (₹) is used throughout the app for all monetary values.",
+    "For 'Glassmorphism', do not just use opacity. Use 'backdrop-blur-md' or 'backdrop-blur-xl' to ensure text legibility.",
+    "Paytm Import: Create a drag-and-drop zone that accepts .csv or .pdf files."
+  ],
+  "universal_guidelines": [
+    "Don't make generic centered layouts.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: transition: all.",
+    "NEVER: use AI assistant Emoji characters like 🤖 etc.",
+    "All interactive and key informational elements MUST include a data-testid attribute."
+  ]
+}

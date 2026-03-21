@@ -1,0 +1,33 @@
+import asyncio
+import httpx
+import os
+
+async def test_gemini():
+    api_key = input("Paste your GEMINI_API_KEY: ").strip()
+    
+    print("\n--- Testing Gemini API directly ---")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key={api_key}",
+                headers={"content-type": "application/json"},
+                json={
+                    "system_instruction": {"parts": [{"text": "You are a helpful assistant."}]},
+                    "contents": [{"role": "user", "parts": [{"text": "Say hello in one sentence."}]}],
+                    "generationConfig": {"maxOutputTokens": 100},
+                },
+                timeout=30.0,
+            )
+            print(f"Status: {resp.status_code}")
+            print(f"Response: {resp.text[:500]}")
+            
+            if resp.status_code == 200:
+                text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                print(f"\n✅ Gemini works! Reply: {text}")
+            else:
+                print(f"\n❌ Gemini error: {resp.status_code}")
+                print(resp.json())
+    except Exception as e:
+        print(f"❌ Exception: {e}")
+
+asyncio.run(test_gemini())

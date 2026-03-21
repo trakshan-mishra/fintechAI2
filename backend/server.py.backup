@@ -1,0 +1,1086 @@
+from fastapi import FastAPI, APIRouter, HTTPException, Header, Response, Request, UploadFile, File
+from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone, timedelta
+import os
+import logging
+import uuid
+import httpx
+from pathlib import Path
+import json
+import csv
+import io
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+# MongoDB connection
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+# Create the main app
+app = FastAPI()
+api_router = APIRouter(prefix="/api")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# ===== MODELS =====
+
+class User(BaseModel):
+    user_id: str
+    email: str
+    name: str
+    picture: Optional[str] = None
+    created_at: datetime
+
+class SessionCreate(BaseModel):
+    session_id: str
+
+class SessionResponse(BaseModel):
+    user: User
+    session_token: str
+
+class Transaction(BaseModel):
+    transaction_id: str
+    user_id: str
+    type: str  # income or expense
+    amount: float
+    category: str
+    description: Optional[str] = None
+    date: str
+    receipt_url: Optional[str] = None
+    created_at: datetime
+
+class TransactionCreate(BaseModel):
+    type: str
+    amount: float
+    category: str
+    description: Optional[str] = None
+    date: str
+    receipt_url: Optional[str] = None
+
+class Invoice(BaseModel):
+    invoice_id: str
+    user_id: str
+    invoice_number: str
+    gst_number: Optional[str] = None
+    client_name: str
+    items: List[Dict[str, Any]]
+    subtotal: float
+    gst_amount: float
+    total: float
+    date: str
+    created_at: datetime
+
+class InvoiceCreate(BaseModel):
+    invoice_number: str
+    gst_number: Optional[str] = None
+    client_name: str
+    items: List[Dict[str, Any]]
+    subtotal: float
+    gst_amount: float
+    total: float
+    date: str
+
+class ChatMessage(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+
+class TelegramConnect(BaseModel):
+    chat_id: int
+
+# Import enhanced auth module
+from auth_enhanced import (
+    PhoneSignupRequest, EmailSignupRequest, OTPVerifyRequest,
+    generate_otp, hash_otp, send_sms_demo, send_email_demo,
+    send_sms_firebase, send_sms_msg91,
+    AI_QNA_CATEGORIES, get_ai_answer,
+    PaytmInitRequest, initiate_paytm_payment, fetch_paytm_transactions
+)
+
+# ===== HELPER FUNCTIONS =====
+
+async def get_user_from_token(authorization: Optional[str] = None) -> Optional[str]:
+    """Extract user_id from session token"""
+    if not authorization:
+        return None
+    
+    token = authorization.replace("Bearer ", "")
+    session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    
+    if not session:
+        return None
+    
+    expires_at = session["expires_at"]
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    
+    if expires_at < datetime.now(timezone.utc):
+        return None
+    
+    return session["user_id"]
+
+# ===== AUTH ENDPOINTS =====
+
+@api_router.post("/auth/session", response_model=SessionResponse)
+async def create_session(data: SessionCreate):
+    """Exchange session_id for session_token"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": data.session_id}
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid session_id")
+            
+            session_data = response.json()
+            
+            # Check if user exists
+            user_doc = await db.users.find_one({"email": session_data["email"]}, {"_id": 0})
+            
+            if not user_doc:
+                # Create new user
+                user_id = f"user_{uuid.uuid4().hex[:12]}"
+                user_doc = {
+                    "user_id": user_id,
+                    "email": session_data["email"],
+                    "name": session_data["name"],
+                    "picture": session_data.get("picture"),
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+                await db.users.insert_one({**user_doc, "_id": user_id})
+            else:
+                user_id = user_doc["user_id"]
+            
+            # Create session
+            session_token = session_data["session_token"]
+            expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+            
+            await db.user_sessions.insert_one({
+                "user_id": user_id,
+                "session_token": session_token,
+                "expires_at": expires_at.isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+            
+            user = User(**{**user_doc, "created_at": datetime.fromisoformat(user_doc["created_at"])})
+            
+            return SessionResponse(user=user, session_token=session_token)
+            
+    except Exception as e:
+        logger.error(f"Session creation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/auth/me", response_model=User)
+async def get_current_user(authorization: Optional[str] = Header(None)):
+    """Get current authenticated user"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return User(**{**user_doc, "created_at": datetime.fromisoformat(user_doc["created_at"])})
+
+@api_router.post("/auth/logout")
+async def logout(authorization: Optional[str] = Header(None)):
+    """Logout user"""
+    if authorization:
+        token = authorization.replace("Bearer ", "")
+        await db.user_sessions.delete_one({"session_token": token})
+    return {"message": "Logged out successfully"}
+
+# ===== ENHANCED AUTH ENDPOINTS (Phone/Email OTP) =====
+
+@api_router.post("/auth/signup/phone")
+async def signup_with_phone(data: PhoneSignupRequest):
+    """Send OTP to phone for signup"""
+    try:
+        # Check if phone already exists
+        existing = await db.users.find_one({"phone": data.phone}, {"_id": 0})
+        if existing:
+            raise HTTPException(status_code=400, detail="Phone number already registered")
+        
+        # Generate OTP
+        otp = generate_otp()
+        otp_hash = hash_otp(otp)
+        
+        # Store OTP (expires in 10 minutes)
+        await db.otp_store.insert_one({
+            "phone": data.phone,
+            "otp_hash": otp_hash,
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+            "created_at": datetime.now(timezone.utc)
+        })
+        
+        # Send OTP via SMS
+        sent = await send_sms_msg91(data.phone, otp)
+        if not sent:
+            sent = await send_sms_demo(data.phone, otp)
+        
+        return {
+            "success": True,
+            "message": "OTP sent to your phone",
+            "phone": data.phone,
+            "demo_otp": otp if os.getenv("MSG91_AUTH_KEY") == "demo-key" else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Phone signup error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/auth/signup/email")
+async def signup_with_email(data: EmailSignupRequest):
+    """Send OTP to email for signup"""
+    try:
+        # Check if email already exists
+        existing = await db.users.find_one({"email": data.email}, {"_id": 0})
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # Generate OTP
+        otp = generate_otp()
+        otp_hash = hash_otp(otp)
+        
+        # Store OTP
+        await db.otp_store.insert_one({
+            "email": data.email,
+            "otp_hash": otp_hash,
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
+            "created_at": datetime.now(timezone.utc)
+        })
+        
+        # Send OTP via email
+        sent = await send_email_demo(data.email, otp)
+        
+        return {
+            "success": True,
+            "message": "OTP sent to your email",
+            "email": data.email,
+            "demo_otp": otp  # Always show in demo mode
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Email signup error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/auth/verify/otp")
+async def verify_otp(data: OTPVerifyRequest):
+    """Verify OTP and create user account"""
+    try:
+        # Check if phone or email
+        is_phone = data.phone_or_email.startswith("+")
+        query_field = "phone" if is_phone else "email"
+        
+        # Find OTP record
+        otp_record = await db.otp_store.find_one({
+            query_field: data.phone_or_email,
+            "expires_at": {"$gt": datetime.now(timezone.utc)}
+        })
+        
+        if not otp_record:
+            raise HTTPException(status_code=400, detail="OTP expired or invalid")
+        
+        # Verify OTP
+        if hash_otp(data.otp) != otp_record["otp_hash"]:
+            raise HTTPException(status_code=400, detail="Invalid OTP")
+        
+        # Create user account
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        user_data = {
+            "user_id": user_id,
+            query_field: data.phone_or_email,
+            "name": "User",  # Will be updated in profile
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "auth_method": "phone_otp" if is_phone else "email_otp"
+        }
+        
+        # Add email field if phone signup
+        if is_phone:
+            user_data["email"] = f"{user_id}@temp.com"
+        
+        await db.users.insert_one({**user_data})
+        
+        # Create session
+        session_token = f"session_{uuid.uuid4().hex}"
+        expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+        
+        await db.user_sessions.insert_one({
+            "user_id": user_id,
+            "session_token": session_token,
+            "expires_at": expires_at.isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Delete used OTP
+        await db.otp_store.delete_one({"_id": otp_record["_id"]})
+        
+        return {
+            "success": True,
+            "session_token": session_token,
+            "user": user_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"OTP verify error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===== AI Q&A ENDPOINTS =====
+
+@api_router.get("/ai/qna/categories")
+async def get_qna_categories():
+    """Get AI Q&A categories"""
+    return {"categories": AI_QNA_CATEGORIES}
+
+@api_router.post("/ai/qna/ask")
+async def ask_ai_question(
+    category: str,
+    question: str,
+    authorization: Optional[str] = Header(None)
+):
+    """Ask AI a financial question with user context"""
+    try:
+        # Get user context
+        user_context = {}
+        user_id = await get_user_from_token(authorization)
+        if user_id:
+            try:
+                stats = await db.transactions.aggregate([
+                    {"$match": {"user_id": user_id}},
+                    {"$group": {
+                        "_id": None,
+                        "total_income": {"$sum": {"$cond": [{"$eq": ["$type", "income"]}, "$amount", 0]}},
+                        "total_expense": {"$sum": {"$cond": [{"$eq": ["$type", "expense"]}, "$amount", 0]}}
+                    }}
+                ]).to_list(1)
+                
+                if stats:
+                    user_context = {
+                        "total_income": stats[0].get("total_income", 0),
+                        "total_expense": stats[0].get("total_expense", 0),
+                        "balance": stats[0].get("total_income", 0) - stats[0].get("total_expense", 0)
+                    }
+            except:
+                pass
+        
+        # Get AI answer
+        answer = await get_ai_answer(category, question, user_context)
+        
+        # Save Q&A history
+        if user_id:
+            await db.qna_history.insert_one({
+                "user_id": user_id,
+                "category": category,
+                "question": question,
+                "answer": answer,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+        
+        return {
+            "success": True,
+            "category": category,
+            "question": question,
+            "answer": answer
+        }
+        
+    except Exception as e:
+        logger.error(f"AI Q&A error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===== PAYTM INTEGRATION ENDPOINTS =====
+
+@api_router.post("/paytm/init-payment")
+async def init_paytm_payment(
+    data: PaytmInitRequest,
+    authorization: Optional[str] = Header(None)
+):
+    """Initialize Paytm payment"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    result = await initiate_paytm_payment(data.order_id, data.amount, user_id)
+    return result
+
+@api_router.get("/paytm/sync-transactions")
+async def sync_paytm_transactions(authorization: Optional[str] = Header(None)):
+    """Sync Paytm transactions to app"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        # Get user phone
+        user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+        phone = user.get("phone", "")
+        
+        # Fetch Paytm transactions
+        paytm_txns = await fetch_paytm_transactions(phone, days=30)
+        
+        # Import to app
+        imported = 0
+        for txn in paytm_txns:
+            # Check if already imported
+            existing = await db.transactions.find_one({
+                "user_id": user_id,
+                "paytm_txn_id": txn["txn_id"]
+            })
+            
+            if not existing:
+                transaction = {
+                    "transaction_id": f"txn_{uuid.uuid4().hex[:12]}",
+                    "user_id": user_id,
+                    "type": "expense" if txn["type"] == "DEBIT" else "income",
+                    "amount": txn["amount"],
+                    "category": "Paytm",
+                    "description": txn["description"],
+                    "date": txn["date"],
+                    "paytm_txn_id": txn["txn_id"],
+                    "source": "paytm_sync",
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+                await db.transactions.insert_one(transaction)
+                imported += 1
+        
+        return {
+            "success": True,
+            "imported": imported,
+            "total_found": len(paytm_txns),
+            "message": f"Successfully imported {imported} transactions"
+        }
+        
+    except Exception as e:
+        logger.error(f"Paytm sync error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===== TRANSACTION ENDPOINTS =====
+
+@api_router.get("/transactions", response_model=List[Transaction])
+async def get_transactions(
+    type: Optional[str] = None,
+    category: Optional[str] = None,
+    authorization: Optional[str] = Header(None)
+):
+    """Get user transactions with filters"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    query = {"user_id": user_id}
+    if type:
+        query["type"] = type
+    if category:
+        query["category"] = category
+    
+    transactions = await db.transactions.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
+    result = []
+    for t in transactions:
+        t["created_at"] = datetime.fromisoformat(t["created_at"]) if isinstance(t["created_at"], str) else t["created_at"]
+        result.append(Transaction(**t))
+    
+    return result
+
+@api_router.post("/transactions", response_model=Transaction)
+async def create_transaction(data: TransactionCreate, authorization: Optional[str] = Header(None)):
+    """Create new transaction"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    transaction_id = f"txn_{uuid.uuid4().hex[:12]}"
+    transaction = {
+        "transaction_id": transaction_id,
+        "user_id": user_id,
+        **data.model_dump(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.transactions.insert_one(transaction)
+    
+    transaction["created_at"] = datetime.fromisoformat(transaction["created_at"])
+    return Transaction(**transaction)
+
+@api_router.delete("/transactions/{transaction_id}")
+async def delete_transaction(transaction_id: str, authorization: Optional[str] = Header(None)):
+    """Delete transaction"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    result = await db.transactions.delete_one({"transaction_id": transaction_id, "user_id": user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    return {"message": "Transaction deleted"}
+
+@api_router.get("/transactions/stats")
+async def get_transaction_stats(authorization: Optional[str] = Header(None)):
+    """Get income/expense statistics"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    transactions = await db.transactions.find({"user_id": user_id}, {"_id": 0}).to_list(10000)
+    
+    total_income = sum(t["amount"] for t in transactions if t["type"] == "income")
+    total_expense = sum(t["amount"] for t in transactions if t["type"] == "expense")
+    
+    # Category breakdown
+    category_stats = {}
+    for t in transactions:
+        cat = t["category"]
+        if cat not in category_stats:
+            category_stats[cat] = {"income": 0, "expense": 0}
+        category_stats[cat][t["type"]] += t["amount"]
+    
+    return {
+        "total_income": total_income,
+        "total_expense": total_expense,
+        "balance": total_income - total_expense,
+        "category_breakdown": category_stats,
+        "transaction_count": len(transactions)
+    }
+
+# ===== INVOICE ENDPOINTS =====
+
+@api_router.get("/invoices", response_model=List[Invoice])
+async def get_invoices(authorization: Optional[str] = Header(None)):
+    """Get user invoices"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    invoices = await db.invoices.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    
+    result = []
+    for inv in invoices:
+        inv["created_at"] = datetime.fromisoformat(inv["created_at"]) if isinstance(inv["created_at"], str) else inv["created_at"]
+        result.append(Invoice(**inv))
+    
+    return result
+
+@api_router.post("/invoices", response_model=Invoice)
+async def create_invoice(data: InvoiceCreate, authorization: Optional[str] = Header(None)):
+    """Create new invoice"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    invoice_id = f"inv_{uuid.uuid4().hex[:12]}"
+    invoice = {
+        "invoice_id": invoice_id,
+        "user_id": user_id,
+        **data.model_dump(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.invoices.insert_one(invoice)
+    
+    invoice["created_at"] = datetime.fromisoformat(invoice["created_at"])
+    return Invoice(**invoice)
+
+# ===== TAX ENDPOINTS =====
+
+@api_router.get("/tax/summary")
+async def get_tax_summary(authorization: Optional[str] = Header(None)):
+    """Get tax summary"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    transactions = await db.transactions.find({"user_id": user_id}, {"_id": 0}).to_list(10000)
+    invoices = await db.invoices.find({"user_id": user_id}, {"_id": 0}).to_list(10000)
+    
+    total_income = sum(t["amount"] for t in transactions if t["type"] == "income")
+    total_expense = sum(t["amount"] for t in transactions if t["type"] == "expense")
+    total_gst_collected = sum(inv["gst_amount"] for inv in invoices)
+    
+    # Simple tax calculation (30% on income above 10L for demonstration)
+    taxable_income = max(0, total_income - total_expense - 1000000)
+    estimated_tax = taxable_income * 0.3
+    
+    return {
+        "total_income": total_income,
+        "total_expense": total_expense,
+        "taxable_income": taxable_income,
+        "estimated_tax": estimated_tax,
+        "gst_collected": total_gst_collected,
+        "deductions": total_expense
+    }
+
+# ===== AI CHAT ENDPOINTS =====
+
+@api_router.post("/ai/chat")
+async def ai_chat(data: ChatMessage, authorization: Optional[str] = Header(None)):
+    """Chat with AI for financial insights"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        api_key = os.getenv("GEMINI_API_KEY")
+        session_id = data.session_id or f"chat_{uuid.uuid4().hex[:12]}"
+
+        # Get user's financial context
+        stats = await get_transaction_stats(authorization)
+
+        system_message = f"""You are a financial advisor AI assistant. The user has:
+- Total Income: ₹{stats['total_income']:.2f}
+- Total Expenses: ₹{stats['total_expense']:.2f}
+- Current Balance: ₹{stats['balance']:.2f}
+- Total Transactions: {stats['transaction_count']}
+
+Provide helpful, actionable financial advice in a conversational tone. Focus on Indian financial context (GST, tax planning, investments)."""
+
+        async with httpx.AsyncClient() as aclient:
+            resp = await aclient.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key={api_key}",
+                headers={"content-type": "application/json"},
+                json={
+                    "system_instruction": {"parts": [{"text": system_message}]},
+                    "contents": [{"role": "user", "parts": [{"text": data.message}]}],
+                    "generationConfig": {"maxOutputTokens": 1024},
+                },
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            response = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+        # Save chat history
+        await db.ai_chats.insert_one({
+            "user_id": user_id,
+            "session_id": session_id,
+            "message": data.message,
+            "response": response,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+
+        return {"response": response, "session_id": session_id}
+        
+    except Exception as e:
+        logger.error(f"AI chat error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/ai/insights")
+async def get_ai_insights(authorization: Optional[str] = Header(None)):
+    """Get AI-generated financial insights"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        api_key = os.getenv("GEMINI_API_KEY")
+        stats = await get_transaction_stats(authorization)
+
+        prompt = f"""Based on this financial data:
+- Income: ₹{stats['total_income']:.2f}
+- Expenses: ₹{stats['total_expense']:.2f}
+- Balance: ₹{stats['balance']:.2f}
+- Categories: {json.dumps(stats['category_breakdown'])}
+
+Provide 3-5 actionable insights and recommendations for improving financial health. Focus on Indian context."""
+
+        async with httpx.AsyncClient() as aclient:
+            resp = await aclient.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key={api_key}",
+                headers={"content-type": "application/json"},
+                json={
+                    "system_instruction": {"parts": [{"text": "You are a financial analyst. Provide 3-5 key insights based on the user's financial data."}]},
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {"maxOutputTokens": 1024},
+                },
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            response = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+        return {"insights": response}
+        
+    except Exception as e:
+        logger.error(f"AI insights error: {e}")
+        return {"insights": "Unable to generate insights at this time."}
+
+# ===== MARKET ENDPOINTS =====
+
+@api_router.get("/markets/crypto")
+async def get_crypto_prices(limit: int = 20, search: Optional[str] = None):
+    """Get cryptocurrency prices from CoinGecko"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # CoinGecko free API endpoint
+            params = {
+                "vs_currency": "inr",
+                "order": "market_cap_desc",
+                "per_page": min(limit, 100),  # Max 100
+                "page": 1,
+                "sparkline": True,
+                "price_change_percentage": "24h,7d"
+            }
+            
+            # If search query provided
+            if search:
+                params["ids"] = search.lower()
+            
+            response = await client.get(
+                "https://api.coingecko.com/api/v3/coins/markets",
+                params=params,
+                headers={"Accept": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"CoinGecko API: Fetched {len(data)} coins")
+                return data
+            else:
+                logger.warning(f"CoinGecko API returned status {response.status_code}")
+                return get_mock_crypto_data()
+                
+    except Exception as e:
+        logger.error(f"Crypto API error: {e}")
+        return get_mock_crypto_data()
+
+@api_router.get("/markets/crypto/search")
+async def search_crypto(query: str):
+    """Search for cryptocurrencies"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                "https://api.coingecko.com/api/v3/search",
+                params={"query": query}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {"coins": data.get("coins", [])[:10]}
+            return {"coins": []}
+                
+    except Exception as e:
+        logger.error(f"Crypto search error: {e}")
+        return {"coins": []}
+
+def get_mock_crypto_data():
+    """Return mock crypto data when API fails"""
+    return [
+        {
+            "id": "bitcoin",
+            "symbol": "btc",
+            "name": "Bitcoin",
+            "image": "https://assets.coingecko.com/coins/images/1/large/bitcoin.png",
+            "current_price": 7850000,
+            "market_cap": 154000000000000,
+            "price_change_percentage_24h": 2.5,
+            "sparkline_in_7d": {"price": [7800000, 7820000, 7850000, 7900000, 7880000, 7850000]}
+        },
+        {
+            "id": "ethereum",
+            "symbol": "eth",
+            "name": "Ethereum",
+            "image": "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+            "current_price": 285000,
+            "market_cap": 34000000000000,
+            "price_change_percentage_24h": 3.2,
+            "sparkline_in_7d": {"price": [280000, 282000, 285000, 288000, 286000, 285000]}
+        },
+        {
+            "id": "binancecoin",
+            "symbol": "bnb",
+            "name": "BNB",
+            "image": "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",
+            "current_price": 45000,
+            "market_cap": 6900000000000,
+            "price_change_percentage_24h": 1.8,
+            "sparkline_in_7d": {"price": [44000, 44500, 45000, 45500, 45200, 45000]}
+        }
+    ]
+
+@api_router.get("/markets/stocks")
+async def get_stock_prices():
+    """Get Indian stock market data (NSE/BSE)"""
+    try:
+        # Mock data for major Indian stocks across NSE and BSE
+        stocks = [
+            {"symbol": "RELIANCE", "name": "Reliance Industries", "exchange": "NSE", "price": 2456.75, "change": 23.40, "change_percent": 0.96},
+            {"symbol": "TCS", "name": "Tata Consultancy Services", "exchange": "NSE", "price": 3567.80, "change": -12.30, "change_percent": -0.34},
+            {"symbol": "HDFCBANK", "name": "HDFC Bank", "exchange": "NSE", "price": 1678.90, "change": 15.60, "change_percent": 0.94},
+            {"symbol": "INFY", "name": "Infosys", "exchange": "NSE", "price": 1445.25, "change": 8.75, "change_percent": 0.61},
+            {"symbol": "ICICIBANK", "name": "ICICI Bank", "exchange": "NSE", "price": 1123.40, "change": -5.20, "change_percent": -0.46},
+            {"symbol": "HINDUNILVR", "name": "Hindustan Unilever", "exchange": "NSE", "price": 2389.50, "change": 18.90, "change_percent": 0.80},
+            {"symbol": "ITC", "name": "ITC Limited", "exchange": "NSE", "price": 456.30, "change": 3.40, "change_percent": 0.75},
+            {"symbol": "SBIN", "name": "State Bank of India", "exchange": "NSE", "price": 623.75, "change": -8.50, "change_percent": -1.34},
+            {"symbol": "BHARTIARTL", "name": "Bharti Airtel", "exchange": "NSE", "price": 1567.20, "change": 12.30, "change_percent": 0.79},
+            {"symbol": "BAJFINANCE", "name": "Bajaj Finance", "exchange": "NSE", "price": 6789.40, "change": 45.60, "change_percent": 0.68}
+        ]
+        
+        return stocks
+        
+    except Exception as e:
+        logger.error(f"Stock API error: {e}")
+        return []
+
+@api_router.get("/markets/commodities")
+async def get_commodity_prices():
+    """Get commodity prices (Oil, Gold, Silver, etc.)"""
+    try:
+        # Mock commodity data
+        commodities = [
+            {"name": "Crude Oil (Brent)", "symbol": "BRENT", "price": 7245.50, "unit": "per barrel", "change": 125.30, "change_percent": 1.76},
+            {"name": "Gold", "symbol": "GOLD", "price": 62450.00, "unit": "per 10g", "change": -230.00, "change_percent": -0.37},
+            {"name": "Silver", "symbol": "SILVER", "price": 74560.00, "unit": "per kg", "change": 340.00, "change_percent": 0.46},
+            {"name": "Natural Gas", "symbol": "NG", "price": 245.60, "unit": "per mmbtu", "change": -5.40, "change_percent": -2.15},
+            {"name": "Petrol", "symbol": "PETROL", "price": 106.50, "unit": "per litre", "change": 0.50, "change_percent": 0.47},
+            {"name": "Diesel", "symbol": "DIESEL", "price": 94.25, "unit": "per litre", "change": 0.30, "change_percent": 0.32}
+        ]
+        
+        return commodities
+        
+    except Exception as e:
+        logger.error(f"Commodity API error: {e}")
+        return []
+
+@api_router.get("/markets/crypto/predict/{symbol}")
+async def predict_crypto(symbol: str, authorization: Optional[str] = Header(None)):
+    """AI-powered crypto price prediction"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        api_key = os.getenv("GEMINI_API_KEY")
+
+        prompt = f"""Analyze {symbol.upper()} cryptocurrency and provide:
+1. Short-term prediction (24-48 hours)
+2. Key factors affecting price
+3. Risk assessment
+4. Trading recommendation (Buy/Hold/Sell)
+
+Base your analysis on current market conditions, recent trends, and technical indicators. Keep response concise and actionable."""
+
+        async with httpx.AsyncClient() as aclient:
+            resp = await aclient.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key={api_key}",
+                headers={"content-type": "application/json"},
+                json={
+                    "system_instruction": {"parts": [{"text": "You are a cryptocurrency market analyst. Provide analysis based on trends and market conditions."}]},
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {"maxOutputTokens": 1024},
+                },
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            response = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+        return {"symbol": symbol.upper(), "prediction": response}
+        
+    except Exception as e:
+        logger.error(f"Crypto prediction error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===== TELEGRAM ENDPOINTS =====
+
+@api_router.post("/telegram/connect")
+async def connect_telegram(data: TelegramConnect, authorization: Optional[str] = Header(None)):
+    """Link Telegram account"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    await db.telegram_users.update_one(
+        {"user_id": user_id},
+        {"$set": {"chat_id": data.chat_id, "active": True, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    
+    # Send welcome notification
+    try:
+        await send_telegram_message(data.chat_id, "✅ TradeTrack Pro connected successfully! You'll receive financial alerts and updates here.")
+    except Exception as e:
+        logger.error(f"Welcome message error: {e}")
+    
+    return {"message": "Telegram connected successfully", "chat_id": data.chat_id}
+
+@api_router.post("/telegram/notify")
+async def send_notification(message: str, authorization: Optional[str] = Header(None)):
+    """Send notification to user's Telegram"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    telegram_user = await db.telegram_users.find_one({"user_id": user_id, "active": True})
+    if not telegram_user:
+        raise HTTPException(status_code=404, detail="Telegram not connected")
+    
+    try:
+        await send_telegram_message(telegram_user["chat_id"], message)
+        return {"message": "Notification sent successfully"}
+    except Exception as e:
+        logger.error(f"Telegram notification error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send notification")
+
+async def send_telegram_message(chat_id: int, message: str):
+    """Send message via Telegram Bot API"""
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not bot_token:
+        logger.warning("Telegram bot token not configured")
+        return
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": message,
+                    "parse_mode": "Markdown"
+                }
+            )
+    except Exception as e:
+        logger.error(f"Telegram send error: {e}")
+        raise
+
+@api_router.post("/telegram/alerts/transaction")
+async def send_transaction_alert(transaction_id: str, authorization: Optional[str] = Header(None)):
+    """Send transaction alert to Telegram"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    telegram_user = await db.telegram_users.find_one({"user_id": user_id, "active": True})
+    if not telegram_user:
+        return {"message": "Telegram not connected"}
+    
+    transaction = await db.transactions.find_one({"transaction_id": transaction_id, "user_id": user_id}, {"_id": 0})
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    icon = "📈" if transaction["type"] == "income" else "📉"
+    message = f"""{icon} *Transaction Alert*
+
+*Type:* {transaction['type'].title()}
+*Amount:* ₹{transaction['amount']:,.2f}
+*Category:* {transaction['category']}
+*Date:* {transaction['date']}
+{f"*Description:* {transaction['description']}" if transaction.get('description') else ""}
+
+_TradeTrack Pro_"""
+    
+    try:
+        await send_telegram_message(telegram_user["chat_id"], message)
+        return {"message": "Alert sent"}
+    except Exception as e:
+        logger.error(f"Alert error: {e}")
+        return {"message": "Failed to send alert"}
+
+# ===== IMPORT ENDPOINTS =====
+
+@api_router.post("/import/paytm")
+async def import_paytm(file: UploadFile = File(...), authorization: Optional[str] = Header(None)):
+    """Import Paytm transactions from CSV"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        content = await file.read()
+        csv_data = content.decode('utf-8')
+        csv_reader = csv.DictReader(io.StringIO(csv_data))
+        
+        imported_count = 0
+        for row in csv_reader:
+            # Parse Paytm CSV format
+            transaction = {
+                "transaction_id": f"txn_{uuid.uuid4().hex[:12]}",
+                "user_id": user_id,
+                "type": "expense" if float(row.get("Amount", 0)) < 0 else "income",
+                "amount": abs(float(row.get("Amount", 0))),
+                "category": row.get("Category", "Others"),
+                "description": row.get("Description", ""),
+                "date": row.get("Date", datetime.now().strftime("%Y-%m-%d")),
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            await db.transactions.insert_one(transaction)
+            imported_count += 1
+        
+        return {"message": f"Imported {imported_count} transactions"}
+        
+    except Exception as e:
+        logger.error(f"Import error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===== SCANNER ENDPOINTS =====
+
+@api_router.post("/scanner/process")
+async def process_receipt(file: UploadFile = File(...), authorization: Optional[str] = Header(None)):
+    """Process receipt image with OCR"""
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        # Save file temporarily
+        content = await file.read()
+        temp_path = f"/tmp/{uuid.uuid4().hex}.jpg"
+        
+        with open(temp_path, "wb") as f:
+            f.write(content)
+        
+        # OCR processing would be done on frontend with tesseract.js
+        # Here we just save the file and return a URL
+        file_id = uuid.uuid4().hex[:12]
+        
+        return {
+            "success": True,
+            "file_id": file_id,
+            "message": "Receipt uploaded successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Scanner error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===== BASIC ROUTES =====
+
+@api_router.get("/")
+async def root():
+    return {"message": "TradeTrack Pro API", "version": "1.0.0"}
+
+@api_router.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+# Include router
+app.include_router(api_router)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()
