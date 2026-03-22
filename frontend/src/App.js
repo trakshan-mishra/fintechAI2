@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ClerkProvider, SignIn, SignUp } from '@clerk/clerk-react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { Toaster } from './components/ui/sonner';
 import { AuthProvider } from './contexts/AuthContext';
+import { loadBinanceSymbols } from "./utils/binance";
 import './App.css';
 
 import LandingPage from './pages/LandingPage';
@@ -24,6 +25,9 @@ const CLERK_KEY = process.env.REACT_APP_CLERK_PUBLISHABLE_KEY;
 if (!CLERK_KEY) throw new Error('Missing REACT_APP_CLERK_PUBLISHABLE_KEY in .env');
 
 function App() {
+   useEffect(() => {
+    loadBinanceSymbols();
+  }, []);
   return (
     <ClerkProvider publishableKey={CLERK_KEY}>
       <AuthProvider>
