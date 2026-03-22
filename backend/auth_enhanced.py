@@ -301,7 +301,7 @@ async def get_ai_answer(category: str, question: str, user_context: dict = None)
     try:
         import httpx
 
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("GROQ_API_KEY")
 
         # Build context-aware system message
         context_str = ""
@@ -331,17 +331,23 @@ Guidelines:
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key={api_key}",
-                headers={"content-type": "application/json"},
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}"
+                },
                 json={
-                    "system_instruction": {"parts": [{"text": system_message}]},
-                    "contents": [{"role": "user", "parts": [{"text": question}]}],
-                    "generationConfig": {"maxOutputTokens": 4096},
+                    "model": "qwen-qwq-32b",
+                    "messages": [
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": question}
+                    ],
+                    "max_tokens": 1024,
                 },
                 timeout=30.0,
             )
             response.raise_for_status()
-            return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return response.json()["choices"][0]["message"]["content"]
 
     except Exception as e:
         logger.error(f"AI Q&A error: {e}")
