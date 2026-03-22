@@ -27,11 +27,10 @@ const TradingViewChart = ({ symbol }) => {
     const containerRef = useRef(null);
     const tvSymbol = getTVSymbol(symbol, 'crypto'); // crypto is the asset type
 
-    useEffect(() => { 
-const container = containerRef.current;
-if (!container) return;
+    useEffect(() => {
+        if (!containerRef.current || !tvSymbol) return;
         
-        container.innerHTML = '';
+        containerRef.current.innerHTML = '';
         
         const script = document.createElement('script');
         script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
@@ -57,11 +56,11 @@ if (!container) return;
             support_host: 'https://www.tradingview.com'
         });
 
-        container.appendChild(script);
+        containerRef.current.appendChild(script);
         
         return () => {
-            if (container) {
-                container.innerHTML = '';
+            if (containerRef.current) {
+                containerRef.current.innerHTML = '';
             }
         };
     }, [tvSymbol]);
@@ -88,11 +87,10 @@ const TechnicalAnalysisWidget = ({ symbol }) => {
     const containerRef = useRef(null);
     const tvSymbol = getTVSymbol(symbol, 'crypto'); // crypto is the asset type
 
-    useEffect(() => { 
-const container = containerRef.current;
-if (!container) return;
+    useEffect(() => {
+        if (!containerRef.current || !tvSymbol) return;
         
-        container.innerHTML = '';
+        containerRef.current.innerHTML = '';
         
         const script = document.createElement('script');
         script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js';
@@ -109,11 +107,11 @@ if (!container) return;
             colorTheme: 'dark'
         });
 
-        container.appendChild(script);
+        containerRef.current.appendChild(script);
         
         return () => {
-            if (container) {
-                container.innerHTML = '';
+            if (containerRef.current) {
+                containerRef.current.innerHTML = '';
             }
         };
     }, [tvSymbol]);
