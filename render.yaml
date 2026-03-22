@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: tradetrack-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: GEMINI_API_KEY
+        value: AIzaSyC957U3WRFcmO43CqxyqA6q05WzA08dhqU
+      - key: MONGO_URL
+        value: mongodb+srv://trakshanmishra477_db_user:KE3rI2zCV3fQ55Wt@fintechcluster.6oqr84b.mongodb.net/?appName=fintechcluster
+      - key: DB_NAME
+        value: tradetrack
+      - key: CLERK_DOMAIN
+        value: fancy-bunny-90.clerk.accounts.dev
+      - key: COINMARKETCAP_API_KEY
+        value: a85dfa7d1dda48119978dcd228641cd9
+      - key: CORS_ORIGINS
+        value: https://tradetrackpro.netlify.app
+      - key: CLERK_PEM_PUBLIC_KEY
+        value: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA46hbL+ds3R5RAnFt9V0q\nj2x6kjdQXQaAPXgJQ5s3ymKX8T1dv2W2s6K8IehQxUQaj3YRDPLwm7i0G8ow+TUn\nFVjQkjckAb6Gz9ZlAw+UcnM+YUkA0ffgRJwUuOKfw9AKts4mVexmKml9Ec833KX4\n0DHKVNUkETHKW87IP/B7rWe7b+rhoUW1lpGtAloSRStkNfr8gJz6H9tuRWkEQlA2\nDfL1knY+mYY9Zh9SHgmsNzVmWVN4+HV2dozW77X1zGOSzGWYyc74tXEz+8hq1+cV\nxI5qfMvYGPa54DC3NCslkA3MR45QemW3gBzD+LzjFFA0ExUKA0mq7lHWOUayalHg\nQQIDAQAB\n-----END PUBLIC KEY-----"
