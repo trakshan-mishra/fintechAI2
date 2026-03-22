@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
@@ -6,13 +6,12 @@ import Header from '../components/layout/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Brain, Send, Sparkles, Loader2, TrendingUp } from 'lucide-react';
+import { Brain, Send, Sparkles, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
 
 const API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-// ✅ Always reads the latest token from localStorage
 const getAuthHeaders = () => {
   const token = localStorage.getItem('session_token');
   return {
@@ -33,26 +32,10 @@ const AIInsights = () => {
 
   const messagesEndRef = useRef(null);
 
-  useEffect(() => {
-    if (!loading && !user) {
-      navigate('/sign-in');
-    }
-  }, [user, loading, navigate]);
-
-  useEffect(() => {
-    if (!insights && !loading && user) {
-      generateInsights();
-    }
-  }, [user, loading]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
   // =========================
-  // 🔥 GENERATE INSIGHTS
+  // 🔥 FIX: DEFINE FUNCTION FIRST
   // =========================
-  const generateInsights = async () => {
+  const generateInsights = useCallback(async () => {
     setLoadingInsights(true);
     try {
       const res = await fetch(`${API_BASE}/ai/insights`, {
@@ -73,10 +56,35 @@ const AIInsights = () => {
     } finally {
       setLoadingInsights(false);
     }
-  };
+  }, []);
 
   // =========================
-  // 🔥 CHAT FUNCTION
+  // AUTH CHECK
+  // =========================
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate('/sign-in');
+    }
+  }, [user, loading, navigate]);
+
+  // =========================
+  // AUTO LOAD INSIGHTS
+  // =========================
+  useEffect(() => {
+    if (!insights && !loading && user) {
+      generateInsights();
+    }
+  }, [user, loading, insights, generateInsights]);
+
+  // =========================
+  // AUTO SCROLL CHAT
+  // =========================
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // =========================
+  // CHAT FUNCTION
   // =========================
   const sendMessage = async (e) => {
     e.preventDefault();
@@ -183,10 +191,10 @@ const AIInsights = () => {
           <CardContent>
             <ul className="space-y-2 text-sm">
               <li>• Save at least 20% of your income</li>
-              <li>• Keep emergency fund for 6 months of expenses</li>
-              <li>• Diversify investments across equity, debt, and gold</li>
-              <li>• Track expenses regularly to find leaks</li>
-              <li>• Use Section 80C to save up to ₹1.5L in taxes</li>
+              <li>• Keep emergency fund for 6 months</li>
+              <li>• Diversify investments</li>
+              <li>• Track expenses regularly</li>
+              <li>• Use Section 80C for tax saving</li>
             </ul>
           </CardContent>
         </Card>
@@ -205,23 +213,11 @@ const AIInsights = () => {
           <div className="h-[400px] flex flex-col">
 
             <div className="flex-1 overflow-y-auto mb-4 space-y-4 pr-2">
-              {messages.length === 0 && (
-                <p className="text-center text-muted-foreground text-sm py-8">
-                  Ask me anything about your finances, investments, or tax planning!
-                </p>
-              )}
               {messages.map((msg, index) => (
-                <div
-                  key={index}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
-                      msg.role === 'user'
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted'
-                    }`}
-                  >
+                <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
+                    msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                  }`}>
                     <ReactMarkdown>{msg.content}</ReactMarkdown>
                   </div>
                 </div>
@@ -243,10 +239,9 @@ const AIInsights = () => {
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about SIP, tax saving, investments..."
-                disabled={sendingMessage}
+                placeholder="Ask about SIP, tax saving..."
               />
-              <Button type="submit" disabled={sendingMessage || !input.trim()}>
+              <Button type="submit">
                 <Send className="w-4 h-4" />
               </Button>
             </form>
