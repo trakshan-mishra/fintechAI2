@@ -16,11 +16,10 @@ const API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const TradingViewChart = ({ tvSymbol }) => {
   const containerRef = useRef(null);
 
-  useEffect(() => { 
-const container = containerRef.current;
-if (!container) return;
+  useEffect(() => {
+    if (!containerRef.current || !tvSymbol) return;
     
-    container.innerHTML = '';
+    containerRef.current.innerHTML = '';
     
     const script = document.createElement('script');
     script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
@@ -46,11 +45,11 @@ if (!container) return;
       support_host: 'https://www.tradingview.com'
     });
 
-    container.appendChild(script);
+    containerRef.current.appendChild(script);
     
     return () => {
-      if (container) {
-        container.innerHTML = '';
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
       }
     };
   }, [tvSymbol]);
@@ -68,11 +67,10 @@ if (!container) return;
 const TechnicalAnalysisWidget = ({ tvSymbol }) => {
   const containerRef = useRef(null);
 
-  useEffect(() => { 
-const container = containerRef.current;
-if (!container) return;
+  useEffect(() => {
+    if (!containerRef.current || !tvSymbol) return;
     
-    container.innerHTML = '';
+    containerRef.current.innerHTML = '';
     
     const script = document.createElement('script');
     script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js';
@@ -89,11 +87,11 @@ if (!container) return;
       colorTheme: 'dark'
     });
 
-    container.appendChild(script);
+    containerRef.current.appendChild(script);
     
     return () => {
-      if (container) {
-        container.innerHTML = '';
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
       }
     };
   }, [tvSymbol]);
@@ -111,11 +109,10 @@ if (!container) return;
 const SymbolInfoWidget = ({ tvSymbol }) => {
   const containerRef = useRef(null);
 
-  useEffect(() => { 
-const container = containerRef.current;
-if (!container) return;
+  useEffect(() => {
+    if (!containerRef.current || !tvSymbol) return;
     
-    container.innerHTML = '';
+    containerRef.current.innerHTML = '';
     
     const script = document.createElement('script');
     script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-symbol-info.js';
@@ -128,11 +125,11 @@ if (!container) return;
       isTransparent: true
     });
 
-    container.appendChild(script);
+    containerRef.current.appendChild(script);
     
     return () => {
-      if (container) {
-        container.innerHTML = '';
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
       }
     };
   }, [tvSymbol]);
