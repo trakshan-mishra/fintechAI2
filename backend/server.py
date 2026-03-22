@@ -843,9 +843,8 @@ async def get_commodity_prices():
 @api_router.get("/markets/crypto/predict/{symbol}")
 async def predict_crypto(symbol: str, authorization: Optional[str] = Header(None)):
     """AI-powered crypto price prediction with live CoinGecko data"""
+    # Auth optional - works for both logged-in and guest users
     user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         live_data = {}
         try:
@@ -921,9 +920,6 @@ Provide:
 
 @api_router.get("/markets/stocks/predict/{symbol}")
 async def predict_stock(symbol: str, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         prompt = f"""Analyze {symbol.upper()} Indian stock (NSE/BSE) and provide:
 1. Short-term outlook (1-2 weeks)
@@ -944,9 +940,6 @@ Focus on Indian market context, SEBI regulations, and retail investor perspectiv
 
 @api_router.get("/markets/commodities/predict/{symbol}")
 async def predict_commodity(symbol: str, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         prompt = f"""Analyze {symbol.upper()} commodity:
 1. Short-term price outlook (1-2 weeks) in INR
