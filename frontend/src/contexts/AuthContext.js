@@ -1,105 +1,110 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { useUser, useAuth as useClerkAuth } from '@clerk/clerk-react';
+// src/contexts/AuthContext.js
+// Replaces Clerk — uses Firebase Auth for Google sign-in + custom OTP session tokens
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { auth, googleProvider } from '../utils/firebase';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+} from 'firebase/auth';
 import axios from 'axios';
-import { setTokenGetter } from '../utils/api';
 
-const AuthContext = createContext();
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-  const { user: clerkUser, isLoaded: clerkLoaded } = useUser();
-  const { getToken, signOut } = useClerkAuth();
-
-  const [user, setUser] = useState(null);
+  const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // ── Firebase user listener ─────────────────────────────────────────────────
   useEffect(() => {
-    setTokenGetter(getToken);
-  }, [getToken]);
-
-  useEffect(() => {
-    if (!clerkLoaded) return;
-
-    if (!clerkUser) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-
-    const syncUser = async () => {
-      try {
-        const token = await getToken();
-        
-        // Try to get existing user
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Sync Firebase user to our MongoDB
         try {
-          const response = await axios.get(`${API}/auth/me`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          setUser(response.data);
-          setLoading(false);
-          return;
-        } catch (e) {
-          // 404 = not in DB yet, continue to sync
-          // Any other error = also try sync
-        }
-
-        // Create user in our DB
-        try {
-          const response = await axios.post(
-            `${API}/auth/clerk-sync`,
+          const idToken = await firebaseUser.getIdToken();
+          const res = await axios.post(
+            `${API_BASE}/auth/firebase-sync`,
             {
-              clerk_user_id: clerkUser.id,
-              email: clerkUser.primaryEmailAddress?.emailAddress || '',
-              name: clerkUser.fullName || clerkUser.firstName || 'User',
-              picture: clerkUser.imageUrl || null,
+              email: firebaseUser.email,
+              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+              picture: firebaseUser.photoURL,
             },
-            { headers: { Authorization: `Bearer ${token}` } }
+            { headers: { Authorization: `Bearer ${idToken}` } }
           );
-          setUser(response.data.user);
-        } catch (syncError) {
-          console.error('Sync failed:', syncError?.response?.data || syncError.message);
-          // Even if backend sync fails, set a minimal user object
-          // so the app doesn't loop — Clerk user IS authenticated
+          setUser(res.data.user);
+        } catch (err) {
+          console.error('Firebase sync failed:', err);
+          // Still set a basic user object so the UI isn't locked out
           setUser({
-            user_id: clerkUser.id,
-            email: clerkUser.primaryEmailAddress?.emailAddress || '',
-            name: clerkUser.fullName || 'User',
-            picture: clerkUser.imageUrl || null,
+            user_id: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            name: firebaseUser.displayName || 'User',
+            picture: firebaseUser.photoURL || null,
           });
         }
-      } catch (err) {
-        console.error('Auth error:', err);
-        // Fallback: use Clerk user directly so app doesn't loop
-        setUser({
-          user_id: clerkUser.id,
-          email: clerkUser.primaryEmailAddress?.emailAddress || '',
-          name: clerkUser.fullName || 'User',
-          picture: clerkUser.imageUrl || null,
-        });
-      } finally {
-        setLoading(false);
+      } else {
+        // Check for OTP session token (non-Google auth)
+        const sessionToken = localStorage.getItem('session_token');
+        if (sessionToken) {
+          try {
+            const res = await axios.get(`${API_BASE}/auth/me`, {
+              headers: { Authorization: `Bearer ${sessionToken}` },
+            });
+            setUser(res.data);
+          } catch {
+            localStorage.removeItem('session_token');
+            setUser(null);
+          }
+        } else {
+          setUser(null);
+        }
       }
-    };
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
-    syncUser();
-  }, [clerkUser, clerkLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Get auth token (Firebase ID token or OTP session token) ───────────────
+  const getAuthToken = useCallback(async () => {
+    const firebaseUser = auth.currentUser;
+    if (firebaseUser) {
+      return await firebaseUser.getIdToken();
+    }
+    return localStorage.getItem('session_token') || null;
+  }, []);
 
-  const getAuthToken = () => getToken();
+  // ── Google sign-in ─────────────────────────────────────────────────────────
+  const signInWithGoogle = async () => {
+    const result = await signInWithPopup(auth, googleProvider);
+    return result.user;
+  };
 
+  // ── OTP login (called by SignupLogin after backend verify) ─────────────────
+  const login = (sessionToken, userData) => {
+    localStorage.setItem('session_token', sessionToken);
+    setUser(userData);
+  };
+
+  // ── Sign out ───────────────────────────────────────────────────────────────
   const logout = async () => {
-    await signOut();
+    try {
+      await firebaseSignOut(auth);
+    } catch {}
+    localStorage.removeItem('session_token');
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, logout, getAuthToken, clerkUser }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, getAuthToken, signInWithGoogle }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within AuthProvider');
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
 };

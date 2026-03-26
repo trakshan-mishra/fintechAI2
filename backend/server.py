@@ -1,108 +1,68 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Header, Response, Request, UploadFile, File
+# Real-time market data + AI predictions with Gemini google_search grounding
+
+from fastapi import FastAPI, APIRouter, HTTPException, Header, UploadFile, File
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
-import os
-import logging
-import uuid
-import httpx
+import os, logging, uuid, httpx, asyncio, base64, io, csv, json, re
 from pathlib import Path
-import json
-import csv
-import io
-import re
-
-# ===== IN-MEMORY CACHE =====
-_cache = {}
-
-def cache_set(key: str, value, ttl_seconds: int = 60):
-    import time
-    _cache[key] = {"value": value, "expires": time.time() + ttl_seconds}
-
-def cache_get(key: str):
-    import time
-    entry = _cache.get(key)
-    if entry and time.time() < entry["expires"]:
-        return entry["value"]
-    return None
-
+import pandas as pd
+import numpy as np
+import warnings
+import yfinance as yf
+warnings.filterwarnings('ignore')
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app
 app = FastAPI()
-api_router = APIRouter(prefix="/api")
+api_router = APIRouter(prefix="/api")   
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+YAHOO_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/json"
+}
 
-# ===== GROQ LLM HELPER =====
+# ─── In-Memory Cache ──────────────────────────────────────────────────────────
+import time as _time
+_cache: dict = {}
 
-async def call_llm(system: str, prompt: str, max_tokens: int = 4096, timeout: float = 30.0) -> str:
-    """Unified LLM call via Groq (qwen/qwen3-32b). Change model here to update everywhere."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY not set in .env")
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "content-type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            json={
-                "model": "qwen/qwen3-32b",
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user",   "content": prompt},
-                ],
-                "max_tokens": max_tokens,
-            },
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"]
-        # Strip <think>...</think> blocks that Qwen3 sometimes emits
-        return re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+def cache_set(key: str, value, ttl_seconds: int = 60):
+    _cache[key] = {"value": value, "expires": _time.time() + ttl_seconds}
 
+def cache_get(key: str):
+    entry = _cache.get(key)
+    if entry and _time.time() < entry["expires"]:
+        return entry["value"]
+    _cache.pop(key, None)
+    return None
 
-# ===== MODELS =====
+# ─── Startup ──────────────────────────────────────────────────────────────────
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("firebase_uid", unique=True, sparse=True)
+    await db.users.create_index("email", unique=True, sparse=True)
+    await db.transactions.create_index([("user_id", 1), ("created_at", -1)])
+    await db.portfolios.create_index([("user_id", 1)])
+    await db.ai_chats.create_index([("user_id", 1), ("session_id", 1)])
+    logger.info("DB indexes created")
 
-class User(BaseModel):
-    user_id: str
-    email: str
-    name: str
-    picture: Optional[str] = None
-    created_at: datetime
+@app.on_event("shutdown")
+async def shutdown():
+    client.close()
 
-class SessionCreate(BaseModel):
-    session_id: str
-
-class SessionResponse(BaseModel):
-    user: User
-    session_token: str
-
-class Transaction(BaseModel):
-    transaction_id: str
-    user_id: str
-    type: str  # income or expense
-    amount: float
-    category: str
-    description: Optional[str] = None
-    date: str
-    receipt_url: Optional[str] = None
-    created_at: datetime
+# ─── Pydantic Models ──────────────────────────────────────────────────────────
 
 class TransactionCreate(BaseModel):
     type: str
@@ -112,529 +72,513 @@ class TransactionCreate(BaseModel):
     date: str
     receipt_url: Optional[str] = None
 
-class Invoice(BaseModel):
-    invoice_id: str
+class Transaction(TransactionCreate):
+    transaction_id: str
     user_id: str
-    invoice_number: str
-    gst_number: Optional[str] = None
-    client_name: str
-    items: List[Dict[str, Any]]
-    subtotal: float
-    gst_amount: float
-    total: float
-    date: str
     created_at: datetime
-
-class InvoiceCreate(BaseModel):
-    invoice_number: str
-    gst_number: Optional[str] = None
-    client_name: str
-    items: List[Dict[str, Any]]
-    subtotal: float
-    gst_amount: float
-    total: float
-    date: str
 
 class ChatMessage(BaseModel):
     message: str
     session_id: Optional[str] = None
 
-class TelegramConnect(BaseModel):
-    chat_id: int
+class PortfolioHolding(BaseModel):
+    symbol: str
+    name: str
+    asset_type: str
+    quantity: float
+    avg_buy_price: float
+    current_price: Optional[float] = None
+    exchange: Optional[str] = None
 
-# Import enhanced auth module
-from auth_enhanced import (
-    PhoneSignupRequest, EmailSignupRequest, OTPVerifyRequest,
-    generate_otp, hash_otp, send_sms_demo, send_email_demo,
-    send_sms_firebase, send_sms_msg91,
-    AI_QNA_CATEGORIES, get_ai_answer,
-    PaytmInitRequest, initiate_paytm_payment, fetch_paytm_transactions
-)
+class PortfolioImport(BaseModel):
+    holdings: List[PortfolioHolding]
+    source: str
 
-# ===== CLERK JWT VERIFICATION =====
+class AISearchRequest(BaseModel):
+    query: str
+    asset_type: Optional[str] = "general"
 
-async def verify_clerk_token(authorization: Optional[str] = None) -> Optional[dict]:
-    """Verify Clerk JWT using PEM public key (networkless)"""
-    if not authorization:
-        return None
-    token = authorization.replace("Bearer ", "").strip()
+class GlobalSearchRequest(BaseModel):
+    query: str
+    asset_type: Optional[str] = "auto"
+
+# ─── USD/INR Rate ─────────────────────────────────────────────────────────────
+
+async def get_live_usd_inr() -> float:
+    cached = cache_get("usd_inr")
+    if cached:
+        return cached
     try:
-        import jwt as pyjwt
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.get("https://api.exchangerate-api.com/v4/latest/USD")
+            if r.status_code == 200:
+                rate = r.json().get("rates", {}).get("INR", 83.5)
+                cache_set("usd_inr", rate, ttl_seconds=600)
+                return rate
+    except Exception as e:
+        logger.warning(f"USD/INR fetch failed: {e}")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.get("https://open.er-api.com/v6/latest/USD")
+            if r.status_code == 200:
+                rate = r.json().get("rates", {}).get("INR", 83.5)
+                cache_set("usd_inr", rate, ttl_seconds=600)
+                return rate
+    except Exception:
+        pass
+    return 83.5
 
-        pem_key = os.getenv("CLERK_PEM_PUBLIC_KEY", "")
-        if not pem_key:
-            logger.error("CLERK_PEM_PUBLIC_KEY not set in .env")
-            return None
+# ─── Web Search (DuckDuckGo - Free) ──────────────────────────────────────────
 
-        pem_key = pem_key.replace("\\n", "\n")
+_NEEDS_SEARCH_PATTERNS = [
+    r"\b(price|rate|value|cost)\b.*\b(of|for)\b",
+    r"\b(current|today|now|latest|live|real.?time)\b",
+    r"\b(how much|what is|tell me)\b.*\b(worth|cost|price)\b",
+    r"\b(stock|share|crypto|bitcoin|eth|gold|silver|crude|commodity)\b",
+    r"\b(market|nifty|sensex|nasdaq|dow|s&p)\b",
+    r"\b(news|update|happening|trending|forecast|predict)\b",
+    r"\b(buy|sell|hold|invest|trade)\b",
+    r"\b(sentiment|analysis|outlook|target)\b",
+    r"\b(polymarket|prediction.?market|betting.?odds)\b",
+    r"\b(weather|temperature|election|gdp|inflation|rbi|fed)\b",
+]
 
-        claims = pyjwt.decode(
-            token,
-            pem_key,
-            algorithms=["RS256"],
-            options={"verify_aud": False},
+def _should_search(question: str) -> bool:
+    q = question.lower()
+    return any(re.search(p, q) for p in _NEEDS_SEARCH_PATTERNS)
+
+async def web_search(query: str, max_results: int = 5) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(
+                "https://api.duckduckgo.com/",
+                params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1}
+            )
+            if r.status_code == 200:
+                data = r.json()
+                snippets = []
+                if data.get("Abstract"):
+                    snippets.append(data["Abstract"])
+                for topic in data.get("RelatedTopics", [])[:max_results]:
+                    if isinstance(topic, dict) and topic.get("Text"):
+                        snippets.append(topic["Text"])
+                if snippets:
+                    return "\n".join(snippets[:max_results])
+    except Exception as e:
+        logger.warning(f"DuckDuckGo search failed: {e}")
+    return ""
+
+# ─── Gemini LLM with Google Search Grounding ─────────────────────────────────
+
+async def call_gemini(messages: list, use_search: bool = True) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "AI service not configured. Please set GEMINI_API_KEY."
+
+    model = "gemini-2.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    contents = []
+    for msg in messages:
+        role = "user" if msg["role"] == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+
+    body = {
+        "contents": contents,
+        "generationConfig": {
+            "maxOutputTokens": 4096,
+            "temperature": 0.7,
+        }
+    }
+
+    if use_search:
+        body["tools"] = [{"google_search": {}}]
+
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as c:
+            resp = await c.post(url, headers={"Content-Type": "application/json"}, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            text_parts = [p.get("text", "") for p in parts if "text" in p]
+            return "".join(text_parts).strip() or "No response generated."
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Gemini API error: {e.response.status_code} - {e.response.text[:300]}")
+        return f"AI temporarily unavailable (HTTP {e.response.status_code}). Please try again."
+    except Exception as e:
+        logger.error(f"Gemini call failed: {e}")
+        return "AI service temporarily unavailable. Please try again."
+
+async def call_llm(system: str, prompt: str, max_tokens: int = 4096, timeout: float = 45.0, use_search: bool = False) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "AI service not configured."
+
+    model = "gemini-2.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": f"{system} {prompt}"}]}],
+        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.7}
+    }
+    if use_search:
+        body["tools"] = [{"google_search": {}}]
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            resp = await c.post(url, headers={"Content-Type": "application/json"}, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            return "".join(p.get("text", "") for p in parts if "text" in p).strip() or "No response."
+    except Exception as e:
+        logger.error(f"LLM call failed: {e}")
+        return "AI analysis temporarily unavailable."
+
+# ─── Mock Crypto Data (Fallback) ─────────────────────────────────────────────
+
+def get_mock_crypto_data():
+    return [
+        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin", "current_price": 0, "market_cap": 0,
+         "price_change_percentage_24h": 0, "total_volume": 0, "market_cap_rank": 1,
+         "image": "https://assets.coingecko.com/coins/images/1/large/bitcoin.png",
+         "sparkline_in_7d": {"price": []}},
+        {"id": "ethereum", "symbol": "eth", "name": "Ethereum", "current_price": 0, "market_cap": 0,
+         "price_change_percentage_24h": 0, "total_volume": 0, "market_cap_rank": 2,
+         "image": "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+         "sparkline_in_7d": {"price": []}},
+    ]
+
+# ─── Trading Indicators ───────────────────────────────────────────────────────
+
+class TradingIndicators:
+    @staticmethod
+    def calculate_sma(prices, period):
+        if len(prices) < period: return None
+        return float(np.mean(prices[-period:]))
+
+    @staticmethod
+    def calculate_ema(prices, period):
+        if len(prices) < period: return None
+        return float(pd.Series(prices).ewm(span=period, adjust=False).mean().iloc[-1])
+
+    @staticmethod
+    def calculate_rsi(prices, period=14):
+        if len(prices) < period + 1: return None
+        s = pd.Series(prices)
+        delta = s.diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
+        avg_gain = gain.iloc[1:period+1].mean()
+        avg_loss = loss.iloc[1:period+1].mean()
+        for i in range(period + 1, len(prices)):
+            avg_gain = (avg_gain * (period - 1) + gain.iloc[i]) / period
+            avg_loss = (avg_loss * (period - 1) + loss.iloc[i]) / period
+        if avg_loss == 0: return 100.0
+        return float(100 - (100 / (1 + avg_gain / avg_loss)))
+
+    @staticmethod
+    def calculate_macd(prices, fast=12, slow=26, signal=9):
+        if len(prices) < slow: return (None, None, None)
+        s = pd.Series(prices)
+        macd = s.ewm(span=fast, adjust=False).mean() - s.ewm(span=slow, adjust=False).mean()
+        sig = macd.ewm(span=signal, adjust=False).mean()
+        return (float(macd.iloc[-1]), float(sig.iloc[-1]), float((macd - sig).iloc[-1]))
+
+    @staticmethod
+    def calculate_bollinger_bands(prices, period=20, num_std=2.0):
+        if len(prices) < period: return (None, None, None, None)
+        sma = float(np.mean(prices[-period:]))
+        std = float(np.std(prices[-period:]))
+        upper, lower = sma + num_std * std, sma - num_std * std
+        width = ((upper - lower) / sma * 100) if sma else 0
+        return (upper, sma, lower, width)
+
+    @staticmethod
+    def calculate_atr(highs, lows, closes, period=14):
+        if len(highs) < period + 1: return None
+        trs = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(highs))]
+        return TradingIndicators.calculate_ema(trs, period)
+
+    @staticmethod
+    def calculate_fibonacci_retracement(high, low):
+        d = high - low
+        return {k: round(high - d * v, 6) for k, v in [("0.236", 0.236), ("0.382", 0.382), ("0.500", 0.500), ("0.618", 0.618), ("0.786", 0.786)]}
+
+    @staticmethod
+    def calculate_pivot_points(high, low, close):
+        pp = (high + low + close) / 3
+        return {"pivot": round(pp, 6), "resistance_1": round(2*pp-low, 6), "resistance_2": round(pp+(high-low), 6),
+                "support_1": round(2*pp-high, 6), "support_2": round(pp-(high-low), 6)}
+
+# ─── Binance Crypto Data ─────────────────────────────────────────────────────
+
+async def get_binance_klines(symbol="BTCUSDT", interval="1h", limit=250):
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        res = await c.get(url)
+        res.raise_for_status()
+        data = res.json()
+    return ([float(x[4]) for x in data], [float(x[2]) for x in data],
+            [float(x[3]) for x in data], [float(x[5]) for x in data])
+
+async def fetch_live_crypto_price(symbol: str) -> dict:
+    try:
+        binance_sym = symbol.upper().replace("/", "").replace("-", "")
+        if not binance_sym.endswith("USDT"):
+            binance_sym = binance_sym + "USDT"
+        (closes, highs, lows, volumes), usd_inr = await asyncio.gather(
+            get_binance_klines(binance_sym, "1h", 200),
+            get_live_usd_inr()
         )
-        return claims
+        ind = TradingIndicators()
+        ema50 = ind.calculate_ema(closes, 50)
+        ema200 = ind.calculate_ema(closes, 200)
+        rsi = ind.calculate_rsi(closes, 14)
+        macd_line, signal_line, macd_hist = ind.calculate_macd(closes)
+        bb_upper, bb_middle, bb_lower, bb_width = ind.calculate_bollinger_bands(closes)
+        atr = ind.calculate_atr(highs, lows, closes)
+        current = closes[-1]
+        high_24h, low_24h = max(highs[-24:]), min(lows[-24:])
+        change_24h = ((closes[-1] - closes[-25]) / closes[-25] * 100) if len(closes) >= 25 else 0
 
-    except Exception as e:
-        logger.error(f"Token verification error: {e}")
-        return None
+        trend_score = (40 if current > ema50 else 0) + (40 if current > ema200 else 0) + (20 if ema50 and ema200 and ema50 > ema200 else 0) if ema50 and ema200 else 0
+        momentum_score = (33 if rsi and rsi > 50 else 0) + (33 if macd_line and signal_line and macd_line > signal_line else 0) + (34 if bb_width and bb_width < 3 else 0)
+        score = (trend_score + momentum_score) / 2
+        signal = "STRONG_BUY" if score >= 75 else "BUY" if score >= 60 else "NEUTRAL" if score >= 40 else "SELL" if score >= 25 else "STRONG_SELL"
 
-async def get_user_from_token(authorization: Optional[str] = None) -> Optional[str]:
-    """Extract user_id from Clerk JWT"""
-    claims = await verify_clerk_token(authorization)
-    if not claims:
-        return None
-    clerk_user_id = claims.get("sub")
-    if not clerk_user_id:
-        return None
-    user_doc = await db.users.find_one({"clerk_user_id": clerk_user_id}, {"_id": 0})
-    if not user_doc:
-        return None
-    return user_doc["user_id"]
-
-# ===== AUTH ENDPOINTS =====
-
-@api_router.post("/auth/clerk-sync")
-async def clerk_sync(data: dict, authorization: Optional[str] = Header(None)):
-    """Sync Clerk user with our DB — called on first login"""
-    claims = await verify_clerk_token(authorization)
-    if not claims:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    clerk_user_id = claims.get("sub")
-    user_doc = await db.users.find_one({"clerk_user_id": clerk_user_id}, {"_id": 0})
-
-    if not user_doc:
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        user_doc = {
-            "user_id": user_id,
-            "clerk_user_id": clerk_user_id,
-            "email": data.get("email", ""),
-            "name": data.get("name", "User"),
-            "picture": data.get("picture"),
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
-        await db.users.insert_one({**user_doc, "_id": user_id})
-
-    return {"user": user_doc}
-
-@api_router.get("/auth/me", response_model=User)
-async def get_current_user(authorization: Optional[str] = Header(None)):
-    claims = await verify_clerk_token(authorization)
-    if not claims:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    clerk_user_id = claims.get("sub")
-    user_doc = await db.users.find_one({"clerk_user_id": clerk_user_id}, {"_id": 0})
-    if not user_doc:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    return User(**{**user_doc, "created_at": datetime.fromisoformat(user_doc["created_at"])})
-
-@api_router.post("/auth/logout")
-async def logout():
-    return {"message": "Logged out successfully"}
-
-# ===== ENHANCED AUTH ENDPOINTS (Phone/Email OTP) =====
-
-@api_router.post("/auth/signup/phone")
-async def signup_with_phone(data: PhoneSignupRequest):
-    try:
-        existing = await db.users.find_one({"phone": data.phone}, {"_id": 0})
-        if existing:
-            raise HTTPException(status_code=400, detail="Phone number already registered")
-        otp = generate_otp()
-        otp_hash = hash_otp(otp)
-        await db.otp_store.insert_one({
-            "phone": data.phone, "otp_hash": otp_hash,
-            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
-            "created_at": datetime.now(timezone.utc)
-        })
-        sent = await send_sms_msg91(data.phone, otp)
-        if not sent:
-            sent = await send_sms_demo(data.phone, otp)
         return {
-            "success": True, "message": "OTP sent to your phone", "phone": data.phone,
-            "demo_otp": otp if os.getenv("MSG91_AUTH_KEY") == "demo-key" else None
+            "symbol": symbol.upper(), "price_usd": round(current, 6), "price_inr": round(current * usd_inr, 2),
+            "high_24h_usd": round(high_24h, 6), "low_24h_usd": round(low_24h, 6),
+            "change_24h_pct": round(change_24h, 2), "volume_24h_usd": round(sum(volumes[-24:]), 2),
+            "usd_inr": round(usd_inr, 2),
+            "ema50_usd": round(ema50, 6) if ema50 else None, "ema200_usd": round(ema200, 6) if ema200 else None,
+            "rsi": round(rsi, 2) if rsi else None,
+            "macd_line": round(macd_line, 6) if macd_line else None,
+            "signal_line": round(signal_line, 6) if signal_line else None,
+            "macd_histogram": round(macd_hist, 6) if macd_hist else None,
+            "bb_upper": round(bb_upper, 6) if bb_upper else None, "bb_middle": round(bb_middle, 6) if bb_middle else None,
+            "bb_lower": round(bb_lower, 6) if bb_lower else None, "bb_width_pct": round(bb_width, 2) if bb_width else None,
+            "atr": round(atr, 6) if atr else None,
+            "fib_retracement": ind.calculate_fibonacci_retracement(high_24h, low_24h),
+            "pivot_points": ind.calculate_pivot_points(highs[-1], lows[-1], closes[-1]),
+            "trend_score": round(trend_score, 2), "momentum_score": round(momentum_score, 2),
+            "overall_score": round(score, 2), "signal": signal, "source": "binance",
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Phone signup error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Binance fetch failed for {symbol}: {e}")
+        return {}
 
-@api_router.post("/auth/signup/email")
-async def signup_with_email(data: EmailSignupRequest):
+# ─── Polymarket Sentiment ─────────────────────────────────────────────────────
+
+async def get_polymarket_sentiment(query: str) -> dict:
     try:
-        existing = await db.users.find_one({"email": data.email}, {"_id": 0})
-        if existing:
-            raise HTTPException(status_code=400, detail="Email already registered")
-        otp = generate_otp()
-        otp_hash = hash_otp(otp)
-        await db.otp_store.insert_one({
-            "email": data.email, "otp_hash": otp_hash,
-            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10),
-            "created_at": datetime.now(timezone.utc)
-        })
-        await send_email_demo(data.email, otp)
-        return {"success": True, "message": "OTP sent to your email", "email": data.email, "demo_otp": otp}
-    except HTTPException:
-        raise
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(
+                "https://gamma-api.polymarket.com/markets",
+                params={"_limit": 5, "active": "true", "closed": "false", "query": query}
+            )
+            if r.status_code == 200:
+                markets = r.json()
+                if markets:
+                    results = []
+                    for m in markets[:5]:
+                        outcome_prices = m.get("outcomePrices", "[]")
+                        if isinstance(outcome_prices, str):
+                            try:
+                                outcome_prices = json.loads(outcome_prices)
+                            except Exception:
+                                outcome_prices = []
+                        outcomes = m.get("outcomes", "[]")
+                        if isinstance(outcomes, str):
+                            try:
+                                outcomes = json.loads(outcomes)
+                            except Exception:
+                                outcomes = []
+                        results.append({
+                            "question": m.get("question", ""),
+                            "description": m.get("description", "")[:200],
+                            "outcomes": outcomes,
+                            "outcome_prices": outcome_prices,
+                            "volume": m.get("volume", 0),
+                            "liquidity": m.get("liquidity", 0),
+                            "end_date": m.get("endDate", ""),
+                        })
+                    return {"markets": results, "source": "polymarket"}
     except Exception as e:
-        logger.error(f"Email signup error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.warning(f"Polymarket fetch failed: {e}")
+    return {"markets": [], "source": "polymarket"}
 
-@api_router.post("/auth/verify/otp")
-async def verify_otp(data: OTPVerifyRequest):
+# ─── Market Data Helpers (yfinance - Global) ─────────────────────────────────
+
+def fetch_market_data(symbols: list, default_names: dict = None):
+    if not symbols:
+        return []
+    results = []
+    for sym in symbols:
+        try:
+            ticker = yf.Ticker(sym)
+            info = ticker.fast_info
+            name = (default_names or {}).get(sym, sym)
+            clean_symbol = sym.replace(".NS", "").replace(".BO", "")
+            results.append({
+                "symbol": clean_symbol,
+                "name": name,
+                "price": round(info.last_price, 2),
+                "change": round(info.last_price - info.previous_close, 2),
+                "change_percent": round(((info.last_price - info.previous_close) / info.previous_close) * 100, 2),
+                "high": round(info.day_high, 2),
+                "low": round(info.day_low, 2),
+                "volume": int(info.last_volume),
+                "currency": getattr(info, 'currency', 'USD'),
+            })
+        except Exception as e:
+            logger.warning(f"Could not fetch data for {sym}: {e}")
+    return results
+
+def search_yfinance_global(query: str) -> list:
+    results = []
+    query = query.upper().strip()
+
+    # Special commodity mapping
+    commodity_map = {
+        "GOLD": "GC=F",
+        "SILVER": "SI=F",
+        "CRUDE": "CL=F",
+        "OIL": "CL=F",
+        "BRENT": "BZ=F",
+        "GAS": "NG=F",
+        "COPPER": "HG=F"
+    }
+
+    if query in commodity_map:
+        query = commodity_map[query]
+
     try:
-        is_phone = data.phone_or_email.startswith("+")
-        query_field = "phone" if is_phone else "email"
-        otp_record = await db.otp_store.find_one({
-            query_field: data.phone_or_email,
-            "expires_at": {"$gt": datetime.now(timezone.utc)}
-        })
-        if not otp_record:
-            raise HTTPException(status_code=400, detail="OTP expired or invalid")
-        if hash_otp(data.otp) != otp_record["otp_hash"]:
-            raise HTTPException(status_code=400, detail="Invalid OTP")
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        user_data = {
-            "user_id": user_id, query_field: data.phone_or_email,
-            "name": "User", "created_at": datetime.now(timezone.utc).isoformat(),
-            "auth_method": "phone_otp" if is_phone else "email_otp"
-        }
-        if is_phone:
-            user_data["email"] = f"{user_id}@temp.com"
-        await db.users.insert_one({**user_data})
-        session_token = f"session_{uuid.uuid4().hex}"
-        expires_at = datetime.now(timezone.utc) + timedelta(days=30)
-        await db.user_sessions.insert_one({
-            "user_id": user_id, "session_token": session_token,
-            "expires_at": expires_at.isoformat(), "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        await db.otp_store.delete_one({"_id": otp_record["_id"]})
-        return {"success": True, "session_token": session_token, "user": user_data}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"OTP verify error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        ticker = yf.Ticker(query)
+        info = ticker.fast_info
 
-# ===== AI Q&A ENDPOINTS =====
+        if info.last_price and info.last_price > 0:
+            hist = ticker.history(period="5d")
 
-@api_router.get("/ai/qna/categories")
-async def get_qna_categories():
-    return {"categories": AI_QNA_CATEGORIES}
-
-@api_router.post("/ai/qna/ask")
-async def ask_ai_question(category: str, question: str, authorization: Optional[str] = Header(None)):
-    try:
-        user_context = {}
-        user_id = await get_user_from_token(authorization)
-        if user_id:
+            name = query
             try:
-                stats = await db.transactions.aggregate([
-                    {"$match": {"user_id": user_id}},
-                    {"$group": {"_id": None,
-                        "total_income": {"$sum": {"$cond": [{"$eq": ["$type", "income"]}, "$amount", 0]}},
-                        "total_expense": {"$sum": {"$cond": [{"$eq": ["$type", "expense"]}, "$amount", 0]}}
-                    }}
-                ]).to_list(1)
-                if stats:
-                    user_context = {
-                        "total_income": stats[0].get("total_income", 0),
-                        "total_expense": stats[0].get("total_expense", 0),
-                        "balance": stats[0].get("total_income", 0) - stats[0].get("total_expense", 0)
-                    }
+                ti = ticker.info
+                name = ti.get("longName") or ti.get("shortName") or query
             except:
                 pass
-        answer = await get_ai_answer(category, question, user_context)
-        if user_id:
-            await db.qna_history.insert_one({
-                "user_id": user_id, "category": category, "question": question,
-                "answer": answer, "created_at": datetime.now(timezone.utc).isoformat()
-            })
-        return {"success": True, "category": category, "question": question, "answer": answer}
-    except Exception as e:
-        logger.error(f"AI Q&A error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
-# ===== PAYTM INTEGRATION ENDPOINTS =====
+            prev = info.previous_close or info.last_price
 
-@api_router.post("/paytm/init-payment")
-async def init_paytm_payment(data: PaytmInitRequest, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return await initiate_paytm_payment(data.order_id, data.amount, user_id)
+            return [{
+                "symbol": query,
+                "name": name,
+                "price": round(info.last_price, 4),
+                "change": round(info.last_price - prev, 4),
+                "change_percent": round(((info.last_price - prev) / prev) * 100, 2),
+                "high": round(info.day_high or 0, 4),
+                "low": round(info.day_low or 0, 4),
+                "volume": int(info.last_volume or 0),
+                "currency": getattr(info, 'currency', 'USD'),
+                "history": [
+                    {"date": d.strftime("%Y-%m-%d"), "close": float(row["Close"])}
+                    for d, row in hist.iterrows()
+                ] if not hist.empty else []
+            }]
+    except Exception:
+        pass
 
-@api_router.get("/paytm/sync-transactions")
-async def sync_paytm_transactions(authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-        phone = user.get("phone", "")
-        paytm_txns = await fetch_paytm_transactions(phone, days=30)
-        imported = 0
-        for txn in paytm_txns:
-            existing = await db.transactions.find_one({"user_id": user_id, "paytm_txn_id": txn["txn_id"]})
-            if not existing:
-                await db.transactions.insert_one({
-                    "transaction_id": f"txn_{uuid.uuid4().hex[:12]}", "user_id": user_id,
-                    "type": "expense" if txn["type"] == "DEBIT" else "income",
-                    "amount": txn["amount"], "category": "Paytm",
-                    "description": txn["description"], "date": txn["date"],
-                    "paytm_txn_id": txn["txn_id"], "source": "paytm_sync",
-                    "created_at": datetime.now(timezone.utc).isoformat()
-                })
-                imported += 1
-        return {"success": True, "imported": imported, "total_found": len(paytm_txns),
-                "message": f"Successfully imported {imported} transactions"}
-    except Exception as e:
-        logger.error(f"Paytm sync error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ===== TRANSACTION ENDPOINTS =====
-
-@api_router.get("/transactions", response_model=List[Transaction])
-async def get_transactions(type: Optional[str] = None, category: Optional[str] = None,
-                           authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    query = {"user_id": user_id}
-    if type:
-        query["type"] = type
-    if category:
-        query["category"] = category
-    transactions = await db.transactions.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    result = []
-    for t in transactions:
-        t["created_at"] = datetime.fromisoformat(t["created_at"]) if isinstance(t["created_at"], str) else t["created_at"]
-        result.append(Transaction(**t))
-    return result
-
-@api_router.post("/transactions", response_model=Transaction)
-async def create_transaction(data: TransactionCreate, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    transaction_id = f"txn_{uuid.uuid4().hex[:12]}"
-    transaction = {
-        "transaction_id": transaction_id, "user_id": user_id,
-        **data.model_dump(), "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    await db.transactions.insert_one(transaction)
-    transaction["created_at"] = datetime.fromisoformat(transaction["created_at"])
-    return Transaction(**transaction)
-
-@api_router.delete("/transactions/{transaction_id}")
-async def delete_transaction(transaction_id: str, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    result = await db.transactions.delete_one({"transaction_id": transaction_id, "user_id": user_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    return {"message": "Transaction deleted"}
-
-@api_router.get("/transactions/stats")
-async def get_transaction_stats(authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    transactions = await db.transactions.find({"user_id": user_id}, {"_id": 0}).to_list(10000)
-    total_income = sum(t["amount"] for t in transactions if t["type"] == "income")
-    total_expense = sum(t["amount"] for t in transactions if t["type"] == "expense")
-    category_stats = {}
-    for t in transactions:
-        cat = t["category"]
-        if cat not in category_stats:
-            category_stats[cat] = {"income": 0, "expense": 0}
-        category_stats[cat][t["type"]] += t["amount"]
-    return {
-        "total_income": total_income, "total_expense": total_expense,
-        "balance": total_income - total_expense,
-        "category_breakdown": category_stats, "transaction_count": len(transactions)
-    }
-
-# ===== INVOICE ENDPOINTS =====
-
-@api_router.get("/invoices", response_model=List[Invoice])
-async def get_invoices(authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    invoices = await db.invoices.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    result = []
-    for inv in invoices:
-        inv["created_at"] = datetime.fromisoformat(inv["created_at"]) if isinstance(inv["created_at"], str) else inv["created_at"]
-        result.append(Invoice(**inv))
-    return result
-
-@api_router.post("/invoices", response_model=Invoice)
-async def create_invoice(data: InvoiceCreate, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    invoice_id = f"inv_{uuid.uuid4().hex[:12]}"
-    invoice = {
-        "invoice_id": invoice_id, "user_id": user_id,
-        **data.model_dump(), "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    await db.invoices.insert_one(invoice)
-    invoice["created_at"] = datetime.fromisoformat(invoice["created_at"])
-    return Invoice(**invoice)
-
-# ===== TAX ENDPOINTS =====
-
-@api_router.get("/tax/summary")
-async def get_tax_summary(authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    transactions = await db.transactions.find({"user_id": user_id}, {"_id": 0}).to_list(10000)
-    invoices = await db.invoices.find({"user_id": user_id}, {"_id": 0}).to_list(10000)
-    total_income = sum(t["amount"] for t in transactions if t["type"] == "income")
-    total_expense = sum(t["amount"] for t in transactions if t["type"] == "expense")
-    total_gst_collected = sum(inv["gst_amount"] for inv in invoices)
-    taxable_income = max(0, total_income - total_expense - 1000000)
-    estimated_tax = taxable_income * 0.3
-    return {
-        "total_income": total_income, "total_expense": total_expense,
-        "taxable_income": taxable_income, "estimated_tax": estimated_tax,
-        "gst_collected": total_gst_collected, "deductions": total_expense
-    }
-
-# ===== AI CHAT ENDPOINTS =====
-
-@api_router.post("/ai/chat")
-async def ai_chat(data: ChatMessage, authorization: Optional[str] = Header(None)):
-    """Chat with AI — uses real user data when logged in, demo data otherwise"""
-    try:
-        session_id = data.session_id or f"chat_{uuid.uuid4().hex[:12]}"
-        user_id = await get_user_from_token(authorization)
-
-        # Use real stats if authenticated, demo stats otherwise
-        if user_id:
-            stats = await get_transaction_stats(authorization)
-        else:
-            stats = {"total_income": 500000, "total_expense": 300000,
-                     "balance": 200000, "transaction_count": 0}
-
-        system_message = f"""You are a financial advisor AI assistant. The user has:
-- Total Income: ₹{stats['total_income']:.2f}
-- Total Expenses: ₹{stats['total_expense']:.2f}
-- Current Balance: ₹{stats['balance']:.2f}
-- Total Transactions: {stats['transaction_count']}
-
-Provide helpful, actionable financial advice in a conversational tone. Focus on Indian financial context (SIP, tax, mutual funds, savings)."""
-
-        response = await call_llm(system_message, data.message)
-
-        await db.ai_chats.insert_one({
-            "user_id": user_id or "anonymous",
-            "session_id": session_id,
-            "message": data.message,
-            "response": response,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-
-        return {"response": response, "session_id": session_id}
-
-    except Exception as e:
-        logger.error(f"AI chat error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.get("/ai/insights")
-async def get_ai_insights(authorization: Optional[str] = Header(None)):
-    """Get AI-generated financial insights"""
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        stats = await get_transaction_stats(authorization)
-        prompt = f"""Based on this financial data:
-- Income: ₹{stats['total_income']:.2f}
-- Expenses: ₹{stats['total_expense']:.2f}
-- Balance: ₹{stats['balance']:.2f}
-- Categories: {json.dumps(stats['category_breakdown'])}
-
-Provide 3-5 actionable insights and recommendations for improving financial health. Focus on Indian context."""
-
-        response = await call_llm(
-            "You are a financial analyst. Provide 3-5 key insights based on the user's financial data.",
-            prompt, max_tokens=4096, timeout=30.0
-        )
-        return {"insights": response}
-    except Exception as e:
-        logger.error(f"AI insights error: {e}")
-        return {"insights": "Unable to generate insights at this time."}
-
-# ===== MARKET ENDPOINTS =====
+    return []
+# ─── Market Endpoints ─────────────────────────────────────────────────────────
 
 @api_router.get("/markets/crypto")
-async def get_crypto_prices(limit: int = 20, search: Optional[str] = None):
-    """Get cryptocurrency prices — CoinMarketCap first, CoinGecko fallback"""
+async def get_crypto(limit: int = 20):
     cache_key = f"crypto_{limit}"
     cached = cache_get(cache_key)
     if cached:
         return cached
-
-    cmc_data = await get_cmc_crypto()
-    if cmc_data:
-        result = cmc_data[:limit]
-        cache_set(cache_key, result, ttl_seconds=120)
-        return result
-
+    # Primary: CoinGecko — real market caps, icons, sparklines
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as c:
             params = {
-                "vs_currency": "inr", "order": "market_cap_desc",
+                "vs_currency": "usd", "order": "market_cap_desc",
                 "per_page": min(limit, 100), "page": 1,
                 "sparkline": True, "price_change_percentage": "24h,7d"
             }
-            if search:
-                params["ids"] = search.lower()
-            response = await client.get(
+            resp = await c.get(
                 "https://api.coingecko.com/api/v3/coins/markets", params=params,
                 headers={"Accept": "application/json", "User-Agent": "TradeTrackPro/1.0"}
             )
-            if response.status_code == 200:
-                data = response.json()
+            if resp.status_code == 200:
+                data = resp.json()
                 cache_set(cache_key, data, ttl_seconds=90)
                 return data
-            elif response.status_code == 429:
-                return cached or get_mock_crypto_data()
-            else:
-                return get_mock_crypto_data()
+            logger.warning(f"CoinGecko returned {resp.status_code}, falling back to Binance")
     except Exception as e:
-        logger.error(f"Crypto API error: {e}")
-        return cached or get_mock_crypto_data()
+        logger.error(f"CoinGecko error: {e}")
+    # Fallback: Binance with INR conversion
+    try:
+        COIN_META = {
+            "BTC":  {"name":"Bitcoin","id":"bitcoin","image":"https://assets.coingecko.com/coins/images/1/large/bitcoin.png"},
+            "ETH":  {"name":"Ethereum","id":"ethereum","image":"https://assets.coingecko.com/coins/images/279/large/ethereum.png"},
+            "BNB":  {"name":"BNB","id":"binancecoin","image":"https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png"},
+            "XRP":  {"name":"XRP","id":"ripple","image":"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png"},
+            "SOL":  {"name":"Solana","id":"solana","image":"https://assets.coingecko.com/coins/images/4128/large/solana.png"},
+            "ADA":  {"name":"Cardano","id":"cardano","image":"https://assets.coingecko.com/coins/images/975/large/cardano.png"},
+            "DOGE": {"name":"Dogecoin","id":"dogecoin","image":"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"},
+            "DOT":  {"name":"Polkadot","id":"polkadot","image":"https://assets.coingecko.com/coins/images/12171/large/polkadot.png"},
+            "MATIC":{"name":"Polygon","id":"matic-network","image":"https://assets.coingecko.com/coins/images/4713/large/matic-token-icon.png"},
+            "LTC":  {"name":"Litecoin","id":"litecoin","image":"https://assets.coingecko.com/coins/images/2/large/litecoin.png"},
+            "SHIB": {"name":"Shiba Inu","id":"shiba-inu","image":"https://assets.coingecko.com/coins/images/11939/large/shiba.png"},
+            "TRX":  {"name":"TRON","id":"tron","image":"https://assets.coingecko.com/coins/images/1094/large/tron-logo.png"},
+            "AVAX": {"name":"Avalanche","id":"avalanche-2","image":"https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png"},
+            "LINK": {"name":"Chainlink","id":"chainlink","image":"https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png"},
+            "UNI":  {"name":"Uniswap","id":"uniswap","image":"https://assets.coingecko.com/coins/images/12504/large/uniswap-uni.png"},
+        }
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            res = await c.get("https://api.binance.com/api/v3/ticker/24hr")
+            usd_inr = await get_live_usd_inr()
+            data = res.json()
+        coins = sorted(
+            [d for d in data if d["symbol"].endswith("USDT")],
+            key=lambda x: float(x.get("quoteVolume", 0)), reverse=True
+        )[:limit]
+        result = []
+        for d in coins:
+            sym = d["symbol"].replace("USDT", "")
+            meta = COIN_META.get(sym, {"name": sym, "id": sym.lower(),
+                "image": f"https://assets.coingecko.com/coins/images/1/large/bitcoin.png"})
+            price_inr = round(float(d["lastPrice"]) * usd_inr, 2)
+            result.append({
+                "id": meta["id"], "symbol": sym.lower(), "name": meta["name"],
+                "image": meta["image"], "current_price": price_inr,
+                "market_cap": 0,
+                "price_change_percentage_24h": float(d["priceChangePercent"]),
+                "total_volume": float(d.get("volume", 0)),
+                "sparkline_in_7d": {"price": []},
+            })
+        return result
+    except Exception as e:
+        logger.error(f"Binance fallback error: {e}")
+        return get_mock_crypto_data()
 
+        
 @api_router.get("/markets/crypto/search")
 async def search_crypto(query: str):
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            search_resp = await client.get(
-                "https://api.coingecko.com/api/v3/search",
-                params={"query": query}, headers={"Accept": "application/json"}
-            )
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            search_resp = await c.get("https://api.coingecko.com/api/v3/search",
+                params={"query": query}, headers={"Accept": "application/json"})
             if search_resp.status_code != 200:
                 return {"coins": []}
             coins = search_resp.json().get("coins", [])[:5]
             if not coins:
                 return {"coins": []}
-            ids = ",".join([c["id"] for c in coins])
-            price_resp = await client.get(
-                "https://api.coingecko.com/api/v3/coins/markets",
-                params={"vs_currency": "inr", "ids": ids, "order": "market_cap_desc",
+            ids = ",".join([coin["id"] for coin in coins])
+            price_resp = await c.get("https://api.coingecko.com/api/v3/coins/markets",
+                params={"vs_currency": "usd", "ids": ids, "order": "market_cap_desc",
                         "sparkline": True, "price_change_percentage": "24h,7d"},
-                headers={"Accept": "application/json"}
-            )
+                headers={"Accept": "application/json"})
             if price_resp.status_code == 200:
                 return {"coins": price_resp.json()}
             return {"coins": coins}
@@ -642,116 +586,25 @@ async def search_crypto(query: str):
         logger.error(f"Crypto search error: {e}")
         return {"coins": []}
 
-def get_mock_crypto_data():
-    return [
-        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin",
-         "image": "https://assets.coingecko.com/coins/images/1/large/bitcoin.png",
-         "current_price": 7850000, "market_cap": 154000000000000,
-         "price_change_percentage_24h": 2.5,
-         "sparkline_in_7d": {"price": [7800000, 7820000, 7850000, 7900000, 7880000, 7850000]}},
-        {"id": "ethereum", "symbol": "eth", "name": "Ethereum",
-         "image": "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
-         "current_price": 285000, "market_cap": 34000000000000,
-         "price_change_percentage_24h": 3.2,
-         "sparkline_in_7d": {"price": [280000, 282000, 285000, 288000, 286000, 285000]}},
-    ]
-
-# ===== STOCKS — Alpha Vantage =====
-
 @api_router.get("/markets/stocks")
-async def get_stock_prices():
-    """Get real-time Indian stock prices via Alpha Vantage"""
-    cache_key = "stocks_all"
+async def get_stocks():
+    cache_key = "stocks_default"
     cached = cache_get(cache_key)
     if cached:
         return cached
-
-    av_key = os.getenv("ALPHA_VANTAGE_API_KEY", "")
-    symbols = [
-        ("BSE:RELIANCE",   "Reliance Industries",      "NSE"),
-        ("BSE:TCS",        "Tata Consultancy Services", "NSE"),
-        ("BSE:HDFCBANK",   "HDFC Bank",                "NSE"),
-        ("BSE:INFY",       "Infosys",                  "NSE"),
-        ("BSE:ICICIBANK",  "ICICI Bank",               "NSE"),
-        ("BSE:ITC",        "ITC Limited",              "NSE"),
-        ("BSE:SBIN",       "State Bank of India",      "NSE"),
-        ("BSE:BHARTIARTL", "Bharti Airtel",            "NSE"),
-        ("BSE:BAJFINANCE", "Bajaj Finance",            "NSE"),
-        ("BSE:WIPRO",      "Wipro",                    "NSE"),
-        ("BSE:TATAMOTORS", "Tata Motors",              "NSE"),
-        ("BSE:HINDUNILVR", "Hindustan Unilever",       "NSE"),
-    ]
-    results = []
-
-    if av_key:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            for av_sym, name, exchange in symbols:
-                try:
-                    r = await client.get("https://www.alphavantage.co/query",
-                        params={"function": "GLOBAL_QUOTE", "symbol": av_sym, "apikey": av_key})
-                    if r.status_code == 200:
-                        q = r.json().get("Global Quote", {})
-                        price = float(q.get("05. price", 0) or 0)
-                        change = float(q.get("09. change", 0) or 0)
-                        pct = float((q.get("10. change percent", "0%") or "0%").replace("%", ""))
-                        if price > 0:
-                            results.append({
-                                "symbol": av_sym.replace("BSE:", ""),
-                                "name": name, "exchange": exchange,
-                                "price": round(price, 2), "change": round(change, 2),
-                                "change_percent": round(pct, 2),
-                            })
-                except Exception as e:
-                    logger.warning(f"AV stock error {av_sym}: {e}")
-
-    if not results:
-        logger.warning("Alpha Vantage stocks unavailable — using fallback data")
-        results = [
-            {"symbol": "RELIANCE",   "name": "Reliance Industries",      "exchange": "NSE", "price": 2456.75, "change": 23.40,  "change_percent":  0.96},
-            {"symbol": "TCS",        "name": "Tata Consultancy Services", "exchange": "NSE", "price": 3567.80, "change": -12.30, "change_percent": -0.34},
-            {"symbol": "HDFCBANK",   "name": "HDFC Bank",                "exchange": "NSE", "price": 1678.90, "change": 15.60,  "change_percent":  0.94},
-            {"symbol": "INFY",       "name": "Infosys",                  "exchange": "NSE", "price": 1445.25, "change":  8.75,  "change_percent":  0.61},
-            {"symbol": "ICICIBANK",  "name": "ICICI Bank",               "exchange": "NSE", "price": 1123.40, "change": -5.20,  "change_percent": -0.46},
-            {"symbol": "ITC",        "name": "ITC Limited",              "exchange": "NSE", "price":  465.30, "change":  3.10,  "change_percent":  0.67},
-            {"symbol": "SBIN",       "name": "State Bank of India",      "exchange": "NSE", "price":  789.55, "change": 11.25,  "change_percent":  1.45},
-            {"symbol": "BHARTIARTL", "name": "Bharti Airtel",            "exchange": "NSE", "price": 1589.70, "change": -8.40,  "change_percent": -0.53},
-        ]
-
-    cache_set(cache_key, results, ttl_seconds=300)
-    return results
-
-@api_router.get("/markets/stocks/search")
-async def search_stocks(query: str):
-    """Search Indian stocks via Alpha Vantage symbol search"""
-    av_key = os.getenv("ALPHA_VANTAGE_API_KEY", "")
-    if not av_key:
-        return []
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get("https://www.alphavantage.co/query",
-                params={"function": "SYMBOL_SEARCH", "keywords": query, "apikey": av_key})
-            if resp.status_code != 200:
-                return []
-            results = []
-            for m in resp.json().get("bestMatches", [])[:10]:
-                sym = m.get("1. symbol", "")
-                name = m.get("2. name", "")
-                if "India" in m.get("4. region", "") or "BSE" in sym or sym.endswith(".NS"):
-                    clean = sym.replace("BSE:", "").replace(".BSE", "").replace(".NS", "")
-                    results.append({"symbol": clean, "name": name,
-                        "exchange": "NSE" if ".NS" in sym else "BSE",
-                        "price": 0, "change": 0, "change_percent": 0})
-            return results
-    except Exception as e:
-        logger.error(f"Stock search error: {e}")
-        return []
-
-# ===== COMMODITIES — Alpha Vantage =====
+    default_stocks = {
+        "AAPL": "Apple Inc.", "GOOGL": "Alphabet Inc.", "MSFT": "Microsoft Corp.",
+        "AMZN": "Amazon.com Inc.", "TSLA": "Tesla Inc.", "NVDA": "NVIDIA Corp.",
+        "META": "Meta Platforms", "NFLX": "Netflix Inc.",
+    }
+    results = await asyncio.to_thread(fetch_market_data, list(default_stocks.keys()), default_stocks)
+    if results:
+        cache_set(cache_key, results, ttl_seconds=30)
+    return results or []
 
 @api_router.get("/markets/commodities")
-async def get_commodity_prices():
-    """Get real-time commodity prices via Alpha Vantage (converted to INR)"""
-    cache_key = "commodities_all"
+async def get_commodities():
+    cache_key = "commodities_default"
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -843,8 +696,9 @@ async def get_commodity_prices():
 @api_router.get("/markets/crypto/predict/{symbol}")
 async def predict_crypto(symbol: str, authorization: Optional[str] = Header(None)):
     """AI-powered crypto price prediction with live CoinGecko data"""
-    # Auth optional - works for both logged-in and guest users
     user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         live_data = {}
         try:
@@ -920,6 +774,9 @@ Provide:
 
 @api_router.get("/markets/stocks/predict/{symbol}")
 async def predict_stock(symbol: str, authorization: Optional[str] = Header(None)):
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         prompt = f"""Analyze {symbol.upper()} Indian stock (NSE/BSE) and provide:
 1. Short-term outlook (1-2 weeks)
@@ -940,360 +797,247 @@ Focus on Indian market context, SEBI regulations, and retail investor perspectiv
 
 @api_router.get("/markets/commodities/predict/{symbol}")
 async def predict_commodity(symbol: str, authorization: Optional[str] = Header(None)):
+    user_id = await get_user_from_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
-        prompt = f"""Analyze {symbol.upper()} commodity:
-1. Short-term price outlook (1-2 weeks) in INR
-2. Key global and domestic factors affecting price
-3. Supply/demand dynamics
-4. Risk factors (geopolitical, seasonal, USD/INR impact)
-5. Trading recommendation with price targets in INR
-
-Focus on MCX India context."""
-        response = await call_llm(
-            "You are a commodities market expert specializing in MCX India, global commodity markets, and their impact on the Indian economy.",
-            prompt, max_tokens=4096, timeout=30.0
+        today = datetime.now().strftime("%B %d, %Y %H:%M UTC")
+        live, poly_data = await asyncio.gather(
+            fetch_live_crypto_price(symbol),
+            get_polymarket_sentiment(f"{symbol} crypto")
         )
-        return {"symbol": symbol.upper(), "prediction": response}
+        if not live:
+            raise HTTPException(status_code=502, detail=f"Could not fetch live data for {symbol}")
+
+        def fmt(v, d=2): return f"{v:.{d}f}" if v is not None else "N/A"
+        fib = live.get("fib_retracement", {})
+        pivots = live.get("pivot_points", {})
+
+        poly_context = ""
+        if poly_data.get("markets"):
+            poly_context = ""
+            poly_context = "\nPREDICTION MARKET SENTIMENT (Polymarket):\n"
+            for m in poly_data["markets"][:3]:
+                poly_context += f"  Q: {m['question']}\n"
+                for i, outcome in enumerate(m.get("outcomes", [])):
+                    price = (
+                        m.get("outcome_prices", [])[i]
+                        if i < len(m.get("outcome_prices", []))
+                        else "?"
+                    )
+                    poly_context += f"    {outcome}: {price}\n"
+
+
+        prompt = f"""LIVE DATA — {symbol} — {today}
+
+PRICE:
+  Current: ${live['price_usd']:,.2f}
+  24H Change: {live['change_24h_pct']:+.2f}%
+  24H High: ${live['high_24h_usd']:,.2f}  |  Low: ${live['low_24h_usd']:,.2f}
+  Volume 24H: ${live['volume_24h_usd']:,.0f}
+
+INDICATORS:
+  RSI(14): {fmt(live.get('rsi'))}
+  EMA50: ${fmt(live.get('ema50_usd'))}  |  EMA200: ${fmt(live.get('ema200_usd'))}
+  MACD: {fmt(live.get('macd_line'), 6)}
+  BB Width: {fmt(live.get('bb_width_pct'))}%
+  ATR: ${fmt(live.get('atr'), 4)}
+
+KEY LEVELS:
+  Fib 0.382: ${fib.get('0.382', 0):,.2f}   Fib 0.618: ${fib.get('0.618', 0):,.2f}
+  Pivot R1: ${pivots.get('resistance_1', 0):,.2f}   Pivot S1: ${pivots.get('support_1', 0):,.2f}
+
+SIGNAL: {live['signal']}  |  Score: {live['overall_score']:.0f}/100
+{poly_context}
+Based on this LIVE data + sentiment:
+1. **Current Price Analysis**
+2. **Key Support & Resistance** (from Fib/Pivot)
+3. **24-48 Hour Outlook** — bull & bear scenarios with targets
+4. **Trade Setup** — Entry, Target, Stop-loss
+5. **Risk/Reward ratio**
+6. **Sentiment Analysis** (from prediction markets if available)
+7. **Final Recommendation** — Buy/Hold/Sell"""
+
+        system = "You are a professional cryptocurrency analyst. Use ONLY the live market data provided. Also use Google Search to validate with latest news."
+        analysis = await call_llm(system, prompt, max_tokens=4096, timeout=45.0, use_search=True)
+
+        return {"symbol": symbol, "timestamp": datetime.now(timezone.utc).isoformat(),
+                "live_data": live, "prediction": analysis, "polymarket": poly_data}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Commodity prediction error: {e}")
+        logger.error(f"Predict error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ===== COINMARKETCAP INTEGRATION =====
+# ─── AI Chat — Gemini + google_search grounding ──────────────────────────────
 
-async def get_cmc_crypto():
-    cmc_key = os.getenv("COINMARKETCAP_API_KEY", "")
-    if not cmc_key:
-        return None
+_MARKET_KW = {
+    "buy", "sell", "hold", "price", "target", "nse", "bse", "reliance", "tcs",
+    "infy", "sbin", "hdfc", "icici", "wipro", "bajaj", "infosys", "today",
+    "news", "should i", "worth", "rally", "crash", "breakout", "support",
+    "resistance", "technical", "earnings", "results", "dividend", "ipo",
+    "nifty", "sensex", "stock", "crypto", "bitcoin", "btc", "eth", "gold",
+    "silver", "crude", "oil", "trade", "rate", "rbi", "sebi", "inflation",
+    "current", "now", "latest", "live", "market", "nasdaq", "dow", "s&p",
+    "commodity", "forex", "predict", "forecast", "sentiment", "polymarket",
+    "apple", "google", "microsoft", "tesla", "nvidia", "amazon", "meta",
+}
+
+@api_router.post("/ai/chat")
+async def ai_chat(data: ChatMessage):
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            fx_resp = await client.get(
-                "https://pro-api.coinmarketcap.com/v1/tools/price-conversion",
-                headers={"X-CMC_PRO_API_KEY": cmc_key},
-                params={"amount": 1, "symbol": "USD", "convert": "INR"}
-            )
-            usd_inr = 83.5
-            if fx_resp.status_code == 200:
-                usd_inr = fx_resp.json().get("data", {}).get("quote", {}).get("INR", {}).get("price", 83.5)
-            resp = await client.get(
-                "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest",
-                headers={"X-CMC_PRO_API_KEY": cmc_key},
-                params={"limit": 50, "convert": "USD", "sort": "market_cap"}
-            )
-            if resp.status_code != 200:
-                return None
-            result = []
-            for c in resp.json().get("data", []):
-                q = c.get("quote", {}).get("USD", {})
-                price_usd = q.get("price", 0)
-                result.append({
-                    "id": c.get("slug", c.get("symbol", "").lower()),
-                    "symbol": c.get("symbol", "").lower(),
-                    "name": c.get("name", ""),
-                    "image": f"https://s2.coinmarketcap.com/static/img/coins/64x64/{c.get('id')}.png",
-                    "current_price": round(price_usd * usd_inr, 2),
-                    "market_cap": round((q.get("market_cap", 0) or 0) * usd_inr, 0),
-                    "price_change_percentage_24h": round(q.get("percent_change_24h", 0), 2),
-                    "price_change_percentage_7d": round(q.get("percent_change_7d", 0), 2),
-                    "total_volume": round((q.get("volume_24h", 0) or 0) * usd_inr, 0),
-                    "circulating_supply": c.get("circulating_supply", 0),
-                    "market_cap_rank": c.get("cmc_rank", 0),
-                    "sparkline_in_7d": {"price": []}, "cmc_id": c.get("id"),
-                })
-            return result
-    except Exception as e:
-        logger.error(f"CMC error: {e}")
-        return None
+        session_id = data.session_id or f"sess_{uuid.uuid4().hex[:8]}"
+        query = data.message.strip()
 
-# ===== PORTFOLIO ENDPOINTS =====
-
-class PortfolioHolding(BaseModel):
-    symbol: str
-    name: str
-    asset_type: str
-    quantity: float
-    avg_buy_price: float
-    current_price: Optional[float] = None
-    exchange: Optional[str] = None
-
-class PortfolioImport(BaseModel):
-    holdings: List[PortfolioHolding]
-    source: str
-
-@api_router.post("/portfolio/import")
-async def import_portfolio(data: PortfolioImport, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        await db.portfolios.delete_many({"user_id": user_id})
-        holdings = [{"holding_id": f"hold_{uuid.uuid4().hex[:12]}", "user_id": user_id,
-                     "symbol": h.symbol.upper(), "name": h.name, "asset_type": h.asset_type,
-                     "quantity": h.quantity, "avg_buy_price": h.avg_buy_price,
-                     "exchange": h.exchange or "", "source": data.source,
-                     "imported_at": datetime.now(timezone.utc).isoformat()} for h in data.holdings]
-        if holdings:
-            await db.portfolios.insert_many(holdings)
-        return {"success": True, "imported": len(holdings),
-                "message": f"Imported {len(holdings)} holdings from {data.source}"}
-    except Exception as e:
-        logger.error(f"Portfolio import error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.post("/portfolio/import/csv")
-async def import_portfolio_csv(file: UploadFile = File(...), source: str = "csv",
-                                authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        content = await file.read()
-        reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
-        holdings = []
-        for row in reader:
-            row = {k.strip().lower(): v.strip() for k, v in row.items() if k}
-            symbol = (row.get("symbol") or row.get("trading symbol") or row.get("scrip") or row.get("ticker") or "").upper()
-            name = row.get("name") or row.get("company") or row.get("scrip name") or symbol
-            qty = float(str(row.get("quantity") or row.get("qty") or row.get("shares") or "0").replace(",", "") or 0)
-            price = float(str(row.get("avg cost") or row.get("average price") or row.get("buy price") or "0").replace(",", "").replace("₹", "") or 0)
-            asset_type = "stock"
-            if row.get("type", "").lower() in ["crypto", "cryptocurrency"]:
-                asset_type = "crypto"
-            elif row.get("type", "").lower() in ["commodity", "etf"]:
-                asset_type = "commodity"
-            if symbol and qty > 0:
-                holdings.append({"holding_id": f"hold_{uuid.uuid4().hex[:12]}", "user_id": user_id,
-                    "symbol": symbol, "name": name, "asset_type": asset_type, "quantity": qty,
-                    "avg_buy_price": price, "exchange": "NSE", "source": source,
-                    "imported_at": datetime.now(timezone.utc).isoformat()})
-        await db.portfolios.delete_many({"user_id": user_id})
-        if holdings:
-            await db.portfolios.insert_many(holdings)
-        return {"success": True, "imported": len(holdings)}
-    except Exception as e:
-        logger.error(f"CSV import error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.get("/portfolio")
-async def get_portfolio(authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return await db.portfolios.find({"user_id": user_id}, {"_id": 0}).to_list(1000)
-
-@api_router.delete("/portfolio/{holding_id}")
-async def delete_holding(holding_id: str, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    await db.portfolios.delete_one({"holding_id": holding_id, "user_id": user_id})
-    return {"success": True}
-
-@api_router.post("/portfolio/ai-recommendations")
-async def get_portfolio_recommendations(authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        holdings = await db.portfolios.find({"user_id": user_id}, {"_id": 0}).to_list(1000)
-        transactions = await db.transactions.find({"user_id": user_id}, {"_id": 0}).to_list(500)
-        total_income = sum(t["amount"] for t in transactions if t.get("type") == "income")
-        total_expense = sum(t["amount"] for t in transactions if t.get("type") == "expense")
-        balance = total_income - total_expense
-        portfolio_summary = "\n".join([
-            f"- {h['name']} ({h['symbol']}): {h['quantity']} units @ ₹{h['avg_buy_price']} [{h['asset_type']}]"
-            for h in holdings
-        ]) if holdings else "No holdings yet"
-
-        prompt = f"""Analyze this Indian investor's portfolio and provide actionable recommendations:
-
-HOLDINGS:
-{portfolio_summary}
-
-FINANCIALS:
-- Income: ₹{total_income:,.0f} | Expenses: ₹{total_expense:,.0f} | Balance: ₹{balance:,.0f}
-
-Provide:
-## 1. Portfolio Health Score (0-100)
-## 2. Bullish Signals 🟢 (3-5 assets/sectors)
-## 3. Bearish/Risky Signals 🔴 (3-5 assets/sectors)
-## 4. Buy Recommendations (with price targets in INR)
-## 5. Sell Recommendations (with price targets in INR)
-## 6. Hold Recommendations
-## 7. Rebalancing Suggestion (allocation %)
-## 8. Top 3 Actions This Week
-
-Use March 2026 Indian market context, SEBI regulations, LTCG/STCG implications."""
-
-        analysis = await call_llm(
-            "You are a SEBI-registered investment advisor specializing in Indian markets. Provide detailed, actionable advice with INR price targets.",
-            prompt, max_tokens=4096, timeout=45.0
+        # Load chat history from DB
+        history_doc = await db.ai_chats.find_one(
+            {"session_id": session_id}, {"_id": 0}
         )
-        return {"success": True, "analysis": analysis, "holdings_count": len(holdings)}
+        messages = []
+        if history_doc:
+            messages = history_doc.get("messages", [])[-5:]
+
+        # Web search context
+        search_context = ""
+        if _should_search(query):
+            results = await web_search(query)
+            if results:
+                search_context = f"""   
+REAL-TIME WEB DATA:
+{results}
+
+Use this data as primary source.
+"""
+
+        system_prompt = """You are a powerful AI assistant with real-time Google Search access.
+
+RULES:
+- For market/financial queries, use Google Search grounding to get live data
+- Provide specific numbers, prices, and data points
+- If you have live data from search, cite it
+- Be direct and actionable
+- Format responses with markdown for readability"""
+
+        messages.insert(0, {"role": "user", "content": system_prompt})
+        messages.append({"role": "user", "content": f"{search_context} User: {query}"})
+
+        response = await call_gemini(messages, use_search=True)
+
+        messages.append({"role": "assistant", "content": response})
+
+        await db.ai_chats.update_one(
+            {"session_id": session_id},
+            {"$set": {"messages": messages[-20:], "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
+
+        return {"response": response, "session_id": session_id}
     except Exception as e:
-        logger.error(f"AI recommendations error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"AI Chat error: {e}")
+        return {"response": "Something went wrong. Please try again.", "session_id": None}
 
-# ===== AI MARKET SEARCH =====
-
-class AISearchRequest(BaseModel):
-    query: str
-    asset_type: Optional[str] = "general"
+# ─── AI Market Research ───────────────────────────────────────────────────────
 
 @api_router.post("/markets/search/ai")
-async def ai_market_search(data: AISearchRequest, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+async def ai_market_search(data: AISearchRequest):
     try:
-        system = """You are a professional financial research analyst with expertise in Indian stocks (NSE/BSE), cryptocurrencies, and commodities (MCX).
-Provide detailed, accurate, actionable research. Always include: current outlook, key levels, risks, and a clear recommendation."""
+        poly_data = await get_polymarket_sentiment(data.query)
+        poly_context = ""
+        if poly_data.get("markets"):
+            poly_context = """
+Prediction Market Data (Polymarket):
+"""
+            for m in poly_data["markets"][:3]:
+                poly_context += f"""- {m['question']}
+"""
 
         prompt = f"""Research: {data.query}
 Asset type: {data.asset_type}
+{poly_context}
+Provide:
+1. **Current Status** (live price/data)
+2. **Technical Outlook** (support/resistance)
+3. **Fundamental Analysis**
+4. **Market Sentiment** (from news + prediction markets)
+5. **Bull Case**
+6. **Bear Case**
+7. **Recommendation** (Buy/Sell/Hold with price targets)
+8. **Risk Factors**"""
 
-Include:
-1. **Current Status**
-2. **Technical Outlook** (support/resistance levels)
-3. **Fundamental Analysis** (key drivers, news)
-4. **Bull Case** 🟢
-5. **Bear Case** 🔴
-6. **Recommendation** (Buy/Sell/Hold with INR price targets)
-7. **Risk Factors**"""
-
-        result = await call_llm(system, prompt, max_tokens=4096, timeout=45.0)
-        return {"success": True, "result": result, "query": data.query}
-    except Exception as e:
-        logger.error(f"AI search error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ===== TELEGRAM ENDPOINTS =====
-
-@api_router.post("/telegram/connect")
-async def connect_telegram(data: TelegramConnect, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    await db.telegram_users.update_one(
-        {"user_id": user_id},
-        {"$set": {"chat_id": data.chat_id, "active": True,
-                  "updated_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True
-    )
-    try:
-        await send_telegram_message(data.chat_id, "✅ TradeTrack Pro connected successfully!")
-    except Exception as e:
-        logger.error(f"Welcome message error: {e}")
-    return {"message": "Telegram connected successfully", "chat_id": data.chat_id}
-
-@api_router.post("/telegram/notify")
-async def send_notification(message: str, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    telegram_user = await db.telegram_users.find_one({"user_id": user_id, "active": True})
-    if not telegram_user:
-        raise HTTPException(status_code=404, detail="Telegram not connected")
-    await send_telegram_message(telegram_user["chat_id"], message)
-    return {"message": "Notification sent successfully"}
-
-async def send_telegram_message(chat_id: int, message: str):
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not bot_token:
-        logger.warning("Telegram bot token not configured")
-        return
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+        result = await call_llm(
+            "You are a professional financial research analyst. Use Google Search to pull live prices and recent news.",
+            prompt, max_tokens=4096, timeout=45.0, use_search=True,
         )
+        return {"success": True, "result": result, "query": data.query, "polymarket": poly_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@api_router.post("/telegram/alerts/transaction")
-async def send_transaction_alert(transaction_id: str, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    telegram_user = await db.telegram_users.find_one({"user_id": user_id, "active": True})
-    if not telegram_user:
-        return {"message": "Telegram not connected"}
-    transaction = await db.transactions.find_one(
-        {"transaction_id": transaction_id, "user_id": user_id}, {"_id": 0})
-    if not transaction:
+# ─── Transaction Endpoints (No Auth Required for Demo) ────────────────────────
+
+@api_router.get("/transactions")
+async def get_transactions(type: Optional[str] = None, category: Optional[str] = None):
+    query = {}
+    if type:
+        query["type"] = type
+    if category:
+        query["category"] = category
+    txns = await db.transactions.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return txns
+
+@api_router.post("/transactions")
+async def create_transaction(data: TransactionCreate):
+    transaction_id = f"txn_{uuid.uuid4().hex[:12]}"
+    txn = {"transaction_id": transaction_id, "user_id": "demo_user",
+           **data.model_dump(), "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.transactions.insert_one(txn)
+    txn.pop("_id", None)
+    return txn
+
+@api_router.delete("/transactions/{transaction_id}")
+async def delete_transaction(transaction_id: str):
+    result = await db.transactions.delete_one({"transaction_id": transaction_id})
+    if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    icon = "📈" if transaction["type"] == "income" else "📉"
-    msg = f"""{icon} *Transaction Alert*\n\n*Type:* {transaction['type'].title()}\n*Amount:* ₹{transaction['amount']:,.2f}\n*Category:* {transaction['category']}\n*Date:* {transaction['date']}\n{f"*Description:* {transaction['description']}" if transaction.get('description') else ""}\n\n_TradeTrack Pro_"""
-    try:
-        await send_telegram_message(telegram_user["chat_id"], msg)
-        return {"message": "Alert sent"}
-    except Exception as e:
-        logger.error(f"Alert error: {e}")
-        return {"message": "Failed to send alert"}
+    return {"message": "Transaction deleted"}
 
-# ===== IMPORT ENDPOINTS =====
+@api_router.get("/transactions/stats")
+async def get_transaction_stats():
+    pipeline = [
+        {"$group": {
+            "_id": None,
+            "total_income": {"$sum": {"$cond": [{"$eq": ["$type", "income"]}, "$amount", 0]}},
+            "total_expense": {"$sum": {"$cond": [{"$eq": ["$type", "expense"]}, "$amount", 0]}},
+            "transaction_count": {"$sum": 1}
+        }}
+    ]
+    stats = await db.transactions.aggregate(pipeline).to_list(1)
+    totals = stats[0] if stats else {"total_income": 0, "total_expense": 0, "transaction_count": 0}
+    return {
+        "total_income": totals.get("total_income", 0),
+        "total_expense": totals.get("total_expense", 0),
+        "balance": totals.get("total_income", 0) - totals.get("total_expense", 0),
+        "transaction_count": totals.get("transaction_count", 0)
+    }
 
-@api_router.post("/import/paytm")
-async def import_paytm(file: UploadFile = File(...), authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        content = await file.read()
-        csv_reader = csv.DictReader(io.StringIO(content.decode('utf-8')))
-        imported_count = 0
-        for row in csv_reader:
-            await db.transactions.insert_one({
-                "transaction_id": f"txn_{uuid.uuid4().hex[:12]}", "user_id": user_id,
-                "type": "expense" if float(row.get("Amount", 0)) < 0 else "income",
-                "amount": abs(float(row.get("Amount", 0))),
-                "category": row.get("Category", "Others"),
-                "description": row.get("Description", ""),
-                "date": row.get("Date", datetime.now().strftime("%Y-%m-%d")),
-                "created_at": datetime.now(timezone.utc).isoformat()
-            })
-            imported_count += 1
-        return {"message": f"Imported {imported_count} transactions"}
-    except Exception as e:
-        logger.error(f"Import error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ===== SCANNER ENDPOINTS =====
-
-@api_router.post("/scanner/process")
-async def process_receipt(file: UploadFile = File(...), authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        content = await file.read()
-        temp_path = f"/tmp/{uuid.uuid4().hex}.jpg"
-        with open(temp_path, "wb") as f:
-            f.write(content)
-        return {"success": True, "file_id": uuid.uuid4().hex[:12], "message": "Receipt uploaded successfully"}
-    except Exception as e:
-        logger.error(f"Scanner error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ===== BASIC ROUTES =====
+# ─── Health & Root ────────────────────────────────────────────────────────────
 
 @api_router.get("/")
 async def root():
-    return {"message": "TradeTrack Pro API", "version": "1.0.0"}
+    return {"message": "Global Market Pulse API", "version": "1.0.0"}
 
 @api_router.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
-# Include router
+# ─── App Config ───────────────────────────────────────────────────────────────
+
 app.include_router(api_router)
 
-# CORS
+_origins = os.environ.get("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()

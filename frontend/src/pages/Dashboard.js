@@ -15,12 +15,17 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [cryptoData, setCryptoData] = useState([]);
+useEffect(() => {
+  if (loading) return;
 
-  useEffect(() => {
-    if (!loading && !user) {
+  const timeout = setTimeout(() => {
+    if (!user) {
       navigate('/sign-in');
     }
-  }, [user, loading, navigate]);
+  }, 500);
+
+  return () => clearTimeout(timeout);
+}, [user, loading, navigate]);
 
   useEffect(() => {
     if (user) {
@@ -115,7 +120,7 @@ const Dashboard = () => {
                   </div>
                   <p className="text-sm text-muted-foreground mb-1">{stat.title}</p>
                   <p className="text-3xl font-bold font-mono tracking-tight" data-testid={`stat-value-${index}`}>
-                    {stat.isCurrency === false ? stat.value : `₹${stat.value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+                    {stat.isCurrency === false ? stat.value : `₹${stat?.value?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
                   </p>
                 </CardContent>
               </Card>
@@ -140,7 +145,7 @@ const Dashboard = () => {
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
                       outerRadius={80}
                       fill="#8884d8"
                       dataKey="value"
@@ -186,7 +191,7 @@ const Dashboard = () => {
                         </div>
                       </div>
                       <p className={`font-mono font-semibold ${txn.type === 'income' ? 'text-emerald-500' : 'text-rose-500'}`}>
-                        {txn.type === 'income' ? '+' : '-'}₹{txn.amount.toLocaleString('en-IN')}
+                        {txn.type === 'income' ? '+' : '-'}₹{(txn?.amount ?? 0).toLocaleString('en-IN')}
                       </p>
                     </div>
                   ))}
@@ -230,10 +235,10 @@ const Dashboard = () => {
                     </div>
                   </div>
                   <p className="text-xl font-mono font-bold mb-1">
-                    ₹{coin.current_price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    ${(coin?.current_price ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                   </p>
                   <p className={`text-sm font-semibold ${coin.price_change_percentage_24h > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {coin.price_change_percentage_24h > 0 ? '+' : ''}{coin.price_change_percentage_24h.toFixed(2)}%
+                    {coin.price_change_percentage_24h > 0 ? '+' : ''}{(coin?.price_change_percentage_24h ?? 0).toFixed(2)}%
                   </p>
                 </div>
               ))}
