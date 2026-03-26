@@ -3,564 +3,313 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
 import Header from '../components/layout/Header';
-import { Card, CardContent } from '../components/ui/card';
+import { api } from '../utils/api';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { TrendingUp, TrendingDown, BarChart3, Bitcoin, Zap, Search, RefreshCw, Loader2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { TrendingUp, TrendingDown, BarChart3, Bitcoin, Zap, Search, RefreshCw, ExternalLink, Sparkles } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
+import ReactMarkdown from 'react-markdown';
 
-const API_BASE = process.env.REACT_APP_BACKEND_URL
-  ? `${process.env.REACT_APP_BACKEND_URL}/api`
-  : '/api';
-
-// ✅ FIX 1: Badge defined at MODULE level — never inside a render or after an early return.
-// Defining it inside the component body (especially after an early return) causes React's
-// "Rules of Hooks" violation and the "Script error." uncaught runtime crash.
-const Badge = ({ value }) => (
-  <span
-    className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-      value >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'
-    }`}
-  >
-    {value >= 0 ? '+' : ''}
-    {Number(value ?? 0).toFixed(2)}%
-  </span>
-);
+const API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const Markets = () => {
   const navigate = useNavigate();
-  const { user, loading } = useAuth();
-
-  const [allCrypto, setAllCrypto] = useState([]);
-  const [allStocks, setAllStocks] = useState([]);
-  const [allCommodities, setAllCommodities] = useState([]);
-
-  const [displayedCrypto, setDisplayedCrypto] = useState([]);
-  const [displayedStocks, setDisplayedStocks] = useState([]);
-  const [displayedCommodities, setDisplayedCommodities] = useState([]);
-
+  const { user, loading, getAuthToken } = useAuth();
+  const [cryptoData, setCryptoData] = useState([]);
+  const [stockData, setStockData] = useState([]);
+  const [commodityData, setCommodityData] = useState([]);
   const [activeTab, setActiveTab] = useState('crypto');
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [displayLimit, setDisplayLimit] = useState(50);
+  const [displayLimit, setDisplayLimit] = useState(20);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedType, setSelectedType] = useState(null);
+  const [prediction, setPrediction] = useState(null);
+  const [loadingPrediction, setLoadingPrediction] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) navigate('/sign-in');
   }, [user, loading, navigate]);
 
-  // ✅ Crypto: CoinGecko direct (public API, no CORS issues)
-  const loadAllCryptos = useCallback(async () => {
+  const fetchMarketData = useCallback(async () => {
     try {
-      const res = await fetch(
-        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=inr&order=market_cap_desc&per_page=250&page=1&sparkline=true&price_change_percentage=24h`
-      );
-      if (!res.ok) throw new Error('CoinGecko error');
-      const data = await res.json();
-      setAllCrypto(data);
-      setDisplayedCrypto(data.slice(0, displayLimit));
+      const [c, s, co] = await Promise.all([api.getCryptoData(displayLimit), api.getStockData(), api.getCommodityData()]);
+      setCryptoData(c.data); setStockData(s.data); setCommodityData(co.data);
       setLastUpdated(new Date());
-    } catch (err) {
-      console.error('Crypto load failed:', err);
-      // Silently fall back — backend /markets/crypto has its own fallback
-      try {
-        const res = await fetch(`${API_BASE}/markets/crypto?limit=50`);
-        if (res.ok) {
-          const data = await res.json();
-          setAllCrypto(data);
-          setDisplayedCrypto(data.slice(0, displayLimit));
-        }
-      } catch {
-        toast.error('Failed to load crypto data');
-      }
-    }
-  }, [displayLimit]);
+    } catch { toast.error('Failed to load market data'); }
+  }, [displayLimit]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ✅ FIX 2: Stocks now routed through backend which uses Alpha Vantage
-  const loadAllStocks = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/markets/stocks`);
-      if (!res.ok) throw new Error('Stocks API error');
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        setAllStocks(data);
-        setDisplayedStocks(data);
-      }
-    } catch (err) {
-      console.error('Stock load failed:', err);
-      toast.error('Could not load stock data');
-    }
-  }, []);
-
-  // ✅ FIX 3: Commodities routed through backend which uses Alpha Vantage
-  const loadAllCommodities = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/markets/commodities`);
-      if (!res.ok) throw new Error('Commodities API error');
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        setAllCommodities(data);
-        setDisplayedCommodities(data);
-      }
-    } catch (err) {
-      console.error('Commodity load failed:', err);
-      toast.error('Could not load commodities data');
-    }
-  }, []);
-
-  // Initial load
   useEffect(() => {
-    if (user) {
-      setLoadingInitial(true);
-      Promise.all([loadAllCryptos(), loadAllStocks(), loadAllCommodities()]).finally(() =>
-        setLoadingInitial(false)
-      );
-    }
-  }, [user, loadAllCryptos, loadAllStocks, loadAllCommodities]);
+    if (user) { fetchMarketData(); const i = setInterval(fetchMarketData, 60000); return () => clearInterval(i); }
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh every 60s
   useEffect(() => {
-    if (!user) return;
-    const interval = setInterval(() => {
-      loadAllCryptos();
-      loadAllStocks();
-      loadAllCommodities();
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [user, loadAllCryptos, loadAllStocks, loadAllCommodities]);
+  if (!searchQuery.trim()) {
+    setSearchResults([]);
+    return;
+  }
 
-  // ✅ FIX 4: Universal search — for stocks/commodities, search backend (Alpha Vantage aware).
-  // For crypto, filter the already-loaded CoinGecko data locally.
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setDisplayedCrypto(allCrypto.slice(0, displayLimit));
-      setDisplayedStocks(allStocks);
-      setDisplayedCommodities(allCommodities);
-      setIsSearching(false);
-      return;
-    }
-
+  const t = setTimeout(async () => {
     setIsSearching(true);
-    const timer = setTimeout(async () => {
-      const q = searchQuery.toLowerCase();
+    try {
+      let res;
 
-      if (activeTab === 'crypto') {
-        // Local filter on already-loaded data
-        const filtered = allCrypto.filter(
-          (coin) =>
-            coin.name?.toLowerCase().includes(q) ||
-            coin.symbol?.toLowerCase().includes(q) ||
-            coin.id?.toLowerCase().includes(q)
-        );
-        setDisplayedCrypto(filtered);
-        setIsSearching(false);
-      } else if (activeTab === 'stocks') {
-        // ✅ Search through backend (Alpha Vantage symbol search)
-        try {
-          const res = await fetch(
-            `${API_BASE}/markets/stocks/search?query=${encodeURIComponent(searchQuery)}`
-          );
-          if (res.ok) {
-            const data = await res.json();
-            setDisplayedStocks(Array.isArray(data) ? data : []);
-          } else {
-            // Fallback: local filter
-            setDisplayedStocks(
-              allStocks.filter(
-                (s) =>
-                  s.name?.toLowerCase().includes(q) || s.symbol?.toLowerCase().includes(q)
-              )
-            );
-          }
-        } catch {
-          setDisplayedStocks(
-            allStocks.filter(
-              (s) =>
-                s.name?.toLowerCase().includes(q) || s.symbol?.toLowerCase().includes(q)
-            )
-          );
-        }
-        setIsSearching(false);
-      } else {
-        // Commodities — local filter only (small dataset)
-        setDisplayedCommodities(
-          allCommodities.filter(
-            (c) =>
-              c.name?.toLowerCase().includes(q) || c.symbol?.toLowerCase().includes(q)
-          )
-        );
-        setIsSearching(false);
+      if (activeTab === "crypto") {
+        res = await api.searchCrypto(searchQuery);
+        setSearchResults(res.data.coins || []);
+      } else if (activeTab === "stocks") {
+        res = await api.searchStocks(searchQuery);
+        const data = await res.json();
+        setSearchResults([data]);
+      } else if (activeTab === "commodities") {
+        res = await api.searchCommodities(searchQuery);
+        const data = await res.json();
+        setSearchResults([data]);
       }
-    }, 300);
 
-    return () => clearTimeout(timer);
-  }, [searchQuery, activeTab, allCrypto, allStocks, allCommodities, displayLimit]);
+    } catch {}
+    finally {
+      setIsSearching(false);
+    }
+  }, 500);
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    await Promise.all([loadAllCryptos(), loadAllStocks(), loadAllCommodities()]);
-    setRefreshing(false);
-    toast.success('Markets refreshed!');
+  return () => clearTimeout(t);
+}, [searchQuery, activeTab]);
+
+  const fetchPrediction = async () => {
+    setLoadingPrediction(true);
+    try {
+      const token = await getAuthToken();
+      const url = selectedType === 'stock'
+        ? `${API_BASE}/markets/stocks/predict/${selectedItem.symbol}`
+        : `${API_BASE}/markets/commodities/predict/${selectedItem.symbol}`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json();
+      setPrediction(d.prediction);
+    } catch { toast.error('Failed to get AI analysis'); }
+    finally { setLoadingPrediction(false); }
   };
 
-  const loadMore = () => setDisplayLimit((prev) => prev + 50);
+  const displayedCrypto = searchQuery && activeTab === 'crypto' ? searchResults : cryptoData;
+  const filteredStocks = searchQuery ? stockData.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.symbol.toLowerCase().includes(searchQuery.toLowerCase())) : stockData;
+  const filteredCommodities = searchQuery ? commodityData.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.symbol.toLowerCase().includes(searchQuery.toLowerCase())) : commodityData;
 
-  // ✅ Early returns AFTER all hooks — no hooks below this point
-  if (loading || loadingInitial) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading markets data...</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" /></div>;
+
+  const Badge = ({ value }) => (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${value >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+      {value >= 0 ? '+' : ''}{value?.toFixed(2)}%
+    </span>
+  );
 
   return (
     <AppLayout>
       <Header title="Markets" />
-
-      {/* Search and controls */}
       <div className="mb-6 flex gap-3 items-center flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder={`Search ${
-              activeTab === 'crypto'
-                ? 'cryptocurrencies'
-                : activeTab === 'stocks'
-                ? 'Indian stocks (NSE/BSE)'
-                : 'commodities'
-            }...`}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 glass-strong"
-          />
-          {isSearching && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2">
-              <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            </div>
-          )}
+          <Input placeholder={activeTab === 'crypto' ? 'Search any crypto...' : activeTab === 'stocks' ? 'Search stocks...' : 'Search commodities...'}
+            value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-10 glass-strong" />
+          {isSearching && <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />}
         </div>
-        {searchQuery && (
-          <Button variant="outline" size="sm" onClick={() => setSearchQuery('')}>
-            Clear
-          </Button>
-        )}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="gap-1 ml-auto"
-        >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
+        {searchQuery && <Button variant="outline" size="sm" onClick={() => { setSearchQuery(''); setSearchResults([]); }}>Clear</Button>}
+        <Button variant="outline" size="sm" onClick={async () => { setRefreshing(true); await fetchMarketData(); setRefreshing(false); toast.success('Refreshed!'); }} disabled={refreshing} className="gap-1 ml-auto">
+          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
         </Button>
         <Button size="sm" onClick={() => navigate('/portfolio')} className="gap-1">
-          <BarChart3 className="w-4 h-4" />
-          My Portfolio
+          <BarChart3 className="w-4 h-4" /> My Portfolio
         </Button>
-        {lastUpdated && (
-          <span className="text-xs text-muted-foreground hidden lg:block">
-            Updated: {lastUpdated.toLocaleTimeString()}
-          </span>
-        )}
+        {lastUpdated && <span className="text-xs text-muted-foreground hidden lg:block">Updated: {lastUpdated.toLocaleTimeString()}</span>}
       </div>
 
-      {/* Stats banner */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <Card className="glass">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Cryptocurrencies</p>
-                <p className="text-2xl font-bold font-mono">{allCrypto.length}</p>
-              </div>
-              <Bitcoin className="w-8 h-8 text-primary opacity-50" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="glass">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Indian Stocks (NSE)</p>
-                <p className="text-2xl font-bold font-mono">{allStocks.length}</p>
-              </div>
-              <BarChart3 className="w-8 h-8 text-primary opacity-50" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="glass">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Commodities</p>
-                <p className="text-2xl font-bold font-mono">{allCommodities.length}</p>
-              </div>
-              <Zap className="w-8 h-8 text-primary opacity-50" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Tabs
-        value={activeTab}
-        onValueChange={(v) => {
-          setActiveTab(v);
-          setSearchQuery('');
-        }}
-        className="mb-6"
-      >
+      <Tabs value={activeTab} onValueChange={v => { setActiveTab(v); setSearchQuery(''); setSearchResults([]); }} className="mb-6">
         <TabsList className="glass">
-          <TabsTrigger
-            value="crypto"
-            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
-            <Bitcoin className="w-4 h-4 mr-1" />
-            Crypto ({displayedCrypto.length})
-          </TabsTrigger>
-          <TabsTrigger
-            value="stocks"
-            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
-            <BarChart3 className="w-4 h-4 mr-1" />
-            Stocks ({displayedStocks.length})
-          </TabsTrigger>
-          <TabsTrigger
-            value="commodities"
-            className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
-            <Zap className="w-4 h-4 mr-1" />
-            Commodities ({displayedCommodities.length})
-          </TabsTrigger>
+          <TabsTrigger value="crypto" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><Bitcoin className="w-4 h-4 mr-1" />Crypto</TabsTrigger>
+          <TabsTrigger value="stocks" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><BarChart3 className="w-4 h-4 mr-1" />Indian Stocks</TabsTrigger>
+          <TabsTrigger value="commodities" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><Zap className="w-4 h-4 mr-1" />Commodities</TabsTrigger>
         </TabsList>
 
-        {/* CRYPTO TAB */}
         <TabsContent value="crypto" className="mt-4">
-          {searchQuery && (
-            <p className="text-sm text-muted-foreground mb-3">
-              Found {displayedCrypto.length} result(s) for &quot;{searchQuery}&quot;
-            </p>
-          )}
           {displayedCrypto.length > 0 ? (
             <>
+              {searchQuery && <p className="text-sm text-muted-foreground mb-3">Live results for "{searchQuery}"</p>}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {displayedCrypto.map((coin, i) => {
                   const change = coin.price_change_percentage_24h || 0;
                   const isUp = change >= 0;
-                  const spark =
-                    coin.sparkline_in_7d?.price?.slice(-20).map((p) => ({ value: p })) || [];
+                  const spark = coin.sparkline_in_7d?.price?.slice(-20).map(p => ({ value: p })) || [];
                   return (
-                    <Card
-                      key={coin.id || i}
-                      className="glass hover-lift cursor-pointer hover:border-primary/50 transition-all"
-                      onClick={() => coin.id && navigate(`/markets/coin/${coin.id}`)}
-                    >
+                    <Card key={coin.id || i} className="glass hover-lift cursor-pointer hover:border-primary/50 transition-all" onClick={() => coin.id && navigate(`/markets/coin/${coin.id}`)}>
                       <CardContent className="p-4">
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex items-center gap-2">
-                            {coin.image && (
-                              <img
-                                src={coin.image}
-                                alt={coin.name}
-                                className="w-8 h-8 rounded-full"
-                              />
-                            )}
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <p className="font-bold text-sm">{coin.symbol?.toUpperCase()}</p>
-                                {coin.market_cap_rank && (
-                                  <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">
-                                    #{coin.market_cap_rank}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-xs text-muted-foreground line-clamp-1">
-                                {coin.name}
-                              </p>
-                            </div>
+                            <img src={coin.image || coin.thumb} alt={coin.name} className="w-8 h-8 rounded-full" onError={e => e.target.style.display='none'} />
+                            <div><p className="font-bold text-sm">{coin.symbol?.toUpperCase()}</p><p className="text-xs text-muted-foreground">{coin.name}</p></div>
                           </div>
                           <Badge value={change} />
                         </div>
-                        <p className="text-xl font-mono font-bold mb-1">
-                          ₹
-                          {coin.current_price?.toLocaleString('en-IN', {
-                            maximumFractionDigits: 2,
-                          })}
-                        </p>
-                        {spark.length > 0 && (
-                          <ResponsiveContainer width="100%" height={40}>
-                            <LineChart data={spark}>
-                              <Line
-                                type="monotone"
-                                dataKey="value"
-                                stroke={isUp ? '#10b981' : '#ef4444'}
-                                strokeWidth={1.5}
-                                dot={false}
-                              />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        )}
+                        {coin.current_price ? (
+                          <p className="text-xl font-mono font-bold mb-1">${coin.current_price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
+                        ) : <p className="text-xs text-muted-foreground mb-2">Loading...</p>}
+                        <p className="text-xs text-muted-foreground mb-2">MCap: ${((coin.market_cap || 0) / 1e9).toFixed(1)}B</p>
+                        {spark.length >= 5
+                          ? <ResponsiveContainer width="100%" height={40}><LineChart data={spark}><Line type="monotone" dataKey="value" stroke={isUp ? '#10b981' : '#ef4444'} strokeWidth={1.5} dot={false} /></LineChart></ResponsiveContainer>
+                          : <div className={`h-0.5 w-full rounded-full my-3 opacity-30 ${isUp ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                        }
+                        <p className="text-xs text-muted-foreground text-center mt-2 flex items-center justify-center gap-1"><ExternalLink className="w-3 h-3" />Full chart</p>
                       </CardContent>
                     </Card>
                   );
                 })}
               </div>
-              {!searchQuery && displayedCrypto.length < allCrypto.length && (
-                <div className="text-center mt-6">
-                  <Button onClick={loadMore} variant="outline">
-                    Load More Cryptocurrencies
+              {!searchQuery && cryptoData.length >= displayLimit && (
+                <div className="mt-4 text-center">
+                  <Button onClick={async () => { setLoadingMore(true); try { const r = await api.getCryptoData(displayLimit+20); setCryptoData(r.data); setDisplayLimit(d=>d+20); } finally { setLoadingMore(false); } }} disabled={loadingMore}>
+                    {loadingMore ? 'Loading...' : 'Load More'}
                   </Button>
                 </div>
               )}
             </>
           ) : (
-            <Card className="glass">
-              <CardContent className="p-16 text-center">
-                <Bitcoin className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                <p>{searchQuery ? 'No cryptocurrencies found' : 'Loading...'}</p>
-              </CardContent>
-            </Card>
+            <Card className="glass"><CardContent className="p-16 text-center"><Bitcoin className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>{searchQuery && !isSearching ? `No results for "${searchQuery}"` : 'Loading...'}</p></CardContent></Card>
           )}
         </TabsContent>
 
-        {/* STOCKS TAB */}
         <TabsContent value="stocks" className="mt-4">
-          {searchQuery && (
-            <p className="text-sm text-muted-foreground mb-3">
-              Found {displayedStocks.length} result(s) for &quot;{searchQuery}&quot;
-            </p>
-          )}
-          {displayedStocks.length > 0 ? (
+          {filteredStocks.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {displayedStocks.map((stock, i) => (
-                <Card
-                  key={stock.symbol || i}
-                  className="glass hover-lift cursor-pointer hover:border-primary/50 transition-all"
-                  onClick={() => navigate(`/markets/asset/${stock.symbol}?type=stock`)}
-                >
+              {filteredStocks.map((stock, i) => (
+                <Card key={i} className="glass hover-lift cursor-pointer hover:border-primary/50 transition-all" onClick={() => navigate(`/markets/asset/${stock.symbol}?type=stock`)}>
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <p className="font-bold">{stock.symbol}</p>
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">
-                            {stock.exchange || 'NSE'}
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground line-clamp-1">{stock.name}</p>
-                      </div>
-                      <Badge value={stock.change_percent || 0} />
+                      <div><div className="flex items-center gap-1.5"><p className="font-bold">{stock.symbol}</p><span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">{stock.exchange}</span></div><p className="text-xs text-muted-foreground">{stock.name}</p></div>
+                      <Badge value={stock.change_percent} />
                     </div>
-                    <p className="text-xl font-mono font-bold mb-1">
-                      ₹{stock.price?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                    </p>
-                    <p
-                      className={`text-sm font-mono ${
-                        (stock.change || 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'
-                      }`}
-                    >
-                      {(stock.change || 0) >= 0 ? '+' : ''}₹
-                      {Math.abs(stock.change || 0).toFixed(2)}
-                    </p>
+                    <p className="text-xl font-mono font-bold mb-1">₹{stock.price?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
+                    <p className={`text-sm font-mono ${stock.change >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{stock.change >= 0 ? '+' : ''}₹{Math.abs(stock.change||0).toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground text-center mt-3 flex items-center justify-center gap-1"><Sparkles className="w-3 h-3" />Click for AI analysis</p>
                   </CardContent>
                 </Card>
               ))}
             </div>
           ) : (
-            <Card className="glass">
-              <CardContent className="p-16 text-center">
-                <BarChart3 className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                <p>{searchQuery ? 'No stocks found' : 'No stocks available'}</p>
-              </CardContent>
-            </Card>
+            <Card className="glass"><CardContent className="p-16 text-center"><BarChart3 className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>{searchQuery ? 'No stocks found' : 'Loading...'}</p></CardContent></Card>
           )}
         </TabsContent>
 
-        {/* COMMODITIES TAB */}
         <TabsContent value="commodities" className="mt-4">
-          {searchQuery && (
-            <p className="text-sm text-muted-foreground mb-3">
-              Found {displayedCommodities.length} result(s) for &quot;{searchQuery}&quot;
-            </p>
-          )}
-          {displayedCommodities.length > 0 ? (
+          {filteredCommodities.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {displayedCommodities.map((comm, i) => (
-                <Card
-                  key={comm.symbol || i}
-                  className="glass hover-lift cursor-pointer hover:border-primary/50 transition-all"
-                  onClick={() => navigate(`/markets/asset/${comm.symbol}?type=commodity`)}
-                >
+              {filteredCommodities.map((c, i) => (
+                <Card key={i} className="glass hover-lift cursor-pointer hover:border-primary/50 transition-all" onClick={() => navigate(`/markets/asset/${c.symbol}?type=commodity`)}>
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <p className="font-bold text-sm">{comm.name}</p>
-                        <p className="text-xs text-muted-foreground">{comm.unit}</p>
-                      </div>
-                      <Badge value={comm.change_percent || 0} />
+                      <div><p className="font-bold text-sm">{c.name}</p><p className="text-xs text-muted-foreground">{c.unit}</p></div>
+                      <Badge value={c.change_percent} />
                     </div>
-                    <p className="text-xl font-mono font-bold mb-1">
-                      ₹{comm.price?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                    </p>
-                    {comm.price_usd && (
-                      <p className="text-xs text-muted-foreground">${comm.price_usd} USD</p>
-                    )}
-                    <p
-                      className={`text-sm font-mono mt-1 ${
-                        (comm.change || 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'
-                      }`}
-                    >
-                      {(comm.change || 0) >= 0 ? '+' : ''}₹
-                      {Math.abs(comm.change || 0).toFixed(2)}
-                    </p>
+                    <p className="text-xl font-mono font-bold mb-1">₹{c.price?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
+                    {c.price_usd && <p className="text-xs text-muted-foreground">${c.price_usd} USD</p>}
+                    <p className={`text-sm font-mono mt-1 ${(c.change||0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{(c.change||0) >= 0 ? '+' : ''}₹{Math.abs(c.change||0).toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground text-center mt-3 flex items-center justify-center gap-1"><Sparkles className="w-3 h-3" />Click for AI analysis</p>
                   </CardContent>
                 </Card>
               ))}
             </div>
           ) : (
-            <Card className="glass">
-              <CardContent className="p-16 text-center">
-                <Zap className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                <p>{searchQuery ? 'No commodities found' : 'No commodities available'}</p>
-              </CardContent>
-            </Card>
+            <Card className="glass"><CardContent className="p-16 text-center"><Zap className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>Loading...</p></CardContent></Card>
           )}
         </TabsContent>
       </Tabs>
 
-      {/* Footer info */}
-      <Card className="glass">
-        <CardContent className="p-3">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-            <div>
-              <p className="text-muted-foreground">Data Sources</p>
-              <p className="font-medium">CoinGecko • Alpha Vantage • TradingView</p>
+      <Card className="glass"><CardContent className="p-3">
+        <div className="grid grid-coX`Zls-2 md:grid-cols-4 gap-3 text-xs">
+          {[['Sources','CoinMarketCap • CoinGecko • Yahoo Finance'],['Updates','Every 60 seconds'],['Currency','Indian Rupee (₹)'],['AI','Gemini 2.0 Flash']].map(([k,v])=>(
+            <div key={k}><p className="text-muted-foreground">{k}</p><p className="font-medium">{v}</p></div>
+          ))}
+        </div>
+      </CardContent></Card>
+
+      {/* Stock / Commodity Detail Modal */}
+      <Dialog open={!!selectedItem} onOpenChange={() => { setSelectedItem(null); setPrediction(null); }}>
+        <DialogContent className="glass-strong max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedType === 'stock' ? <BarChart3 className="w-5 h-5 text-primary" /> : <Zap className="w-5 h-5 text-primary" />}
+              {selectedItem?.name} <span className="text-muted-foreground font-normal">({selectedItem?.symbol})</span>
+            </DialogTitle>
+          </DialogHeader>
+          {selectedItem && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl glass flex items-end justify-between">
+                <div>
+                  <p className="text-4xl font-mono font-bold">₹{selectedItem.price?.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
+                  <p className="text-sm text-muted-foreground mt-1">{selectedType === 'commodity' ? selectedItem.unit : selectedItem.exchange}</p>
+                </div>
+                <div className="text-right">
+                  <p className={`text-2xl font-bold ${(selectedItem.change_percent||0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {(selectedItem.change_percent||0) >= 0 ? '+' : ''}{(selectedItem.change_percent||0).toFixed(2)}%
+                  </p>
+                  <p className={`text-sm font-mono ${(selectedItem.change||0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {(selectedItem.change||0) >= 0 ? '+' : ''}₹{Math.abs(selectedItem.change||0).toFixed(2)} today
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {(selectedType === 'stock' ? [
+                  ['Symbol', selectedItem.symbol],
+                  ['Exchange', selectedItem.exchange],
+                  ['Price Change', `${(selectedItem.change||0) >= 0 ? '+' : ''}₹${(selectedItem.change||0).toFixed(2)}`],
+                  ['% Change', `${(selectedItem.change_percent||0) >= 0 ? '+' : ''}${(selectedItem.change_percent||0).toFixed(2)}%`],
+                ] : [
+                  ['Symbol', selectedItem.symbol],
+                  ['Unit', selectedItem.unit],
+                  ['USD Price', `$${selectedItem.price_usd || 'N/A'}`],
+                  ['Change ₹', `${(selectedItem.change||0) >= 0 ? '+' : ''}₹${Math.abs(selectedItem.change||0).toFixed(2)}`],
+                ]).map(([label, value]) => (
+                  <div key={label} className="p-3 rounded-lg glass-strong">
+                    <p className="text-xs text-muted-foreground">{label}</p>
+                    <p className="font-mono font-semibold">{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {!prediction && !loadingPrediction && (
+                <Button onClick={fetchPrediction} className="w-full gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  Get AI Analysis for {selectedItem.symbol}
+                </Button>
+              )}
+              {loadingPrediction && (
+                <div className="flex items-center justify-center gap-3 py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+                  <p className="text-muted-foreground">Analyzing {selectedItem.name}...</p>
+                </div>
+              )}
+              {prediction && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-bold flex items-center gap-2"><Sparkles className="w-4 h-4 text-primary" />AI Analysis</h3>
+                    <Button variant="outline" size="sm" onClick={fetchPrediction}>Refresh</Button>
+                  </div>
+                  <div className="prose prose-sm dark:prose-invert max-w-none p-4 rounded-xl glass">
+                    <ReactMarkdown>{prediction}</ReactMarkdown>
+                  </div>
+                  <p className="text-xs text-muted-foreground p-2 rounded bg-muted">⚠️ AI analysis only. Not SEBI-registered financial advice.</p>
+                </div>
+              )}
             </div>
-            <div>
-              <p className="text-muted-foreground">Live Updates</p>
-              <p className="font-medium">Every 60 seconds</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Currency</p>
-              <p className="font-medium">Indian Rupee (₹)</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Total Assets</p>
-              <p className="font-medium">
-                {(allCrypto.length + allStocks.length + allCommodities.length).toLocaleString()}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          )}
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 };

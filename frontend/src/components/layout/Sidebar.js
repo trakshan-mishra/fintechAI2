@@ -1,17 +1,12 @@
+// src/components/layout/Sidebar.js
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  Receipt, 
-  Scan, 
-  FileText, 
-  Calculator, 
-  TrendingUp, 
-  Brain, 
-  Settings,
-  LogOut
-} from 'lucide-react';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { 
+  LayoutDashboard, Receipt, Scan, FileText, Calculator, 
+  TrendingUp, Brain, Settings, LogOut, Sparkles, 
+  BarChart3
+} from 'lucide-react';
 
 const Sidebar = () => {
   const location = useLocation();
@@ -19,73 +14,84 @@ const Sidebar = () => {
 
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { path: '/trading', label: 'Trading Dashboard', icon: Sparkles, highlight: true },
     { path: '/transactions', label: 'Transactions', icon: Receipt },
     { path: '/scanner', label: 'Scanner', icon: Scan },
     { path: '/invoices', label: 'Invoices', icon: FileText },
     { path: '/tax', label: 'Tax Summary', icon: Calculator },
     { path: '/markets', label: 'Markets', icon: TrendingUp },
-    { path: '/ai-insights', label: 'AI Chat', icon: Brain },
-    { path: '/ai-qna', label: 'AI Q&A', icon: Brain },
+    { path: '/portfolio', label: 'Portfolio', icon: BarChart3 },
+    { path: '/ai-chat', label: 'AI Chat', icon: Brain },
     { path: '/settings', label: 'Settings', icon: Settings },
   ];
 
-  const isActive = (path) => location.pathname === path;
-
   return (
-    <aside className="fixed left-0 top-0 h-full w-20 lg:w-64 border-r border-border glass-strong z-50 hidden md:flex flex-col" data-testid="sidebar">
-      <div className="p-6">
-        <Link to="/dashboard" className="flex items-center gap-3" data-testid="sidebar-logo">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
-            <span className="text-white font-bold text-xl">T</span>
-          </div>
-          <span className="hidden lg:block text-xl font-bold tracking-tight">TradeTrack Pro</span>
-        </Link>
-      </div>
-
-      <nav className="flex-1 px-3 space-y-1">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.path}
-              to={item.path}
-              data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
-              className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all ${
-                isActive(item.path)
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-              }`}
-            >
-              <Icon className="w-5 h-5 flex-shrink-0" />
-              <span className="hidden lg:block font-medium">{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
-
-      <div className="p-3 border-t border-border">
-        {user && (
-          <div className="flex items-center gap-3 p-3 rounded-xl glass mb-3" data-testid="user-profile-card">
-            <img 
-              src={user.picture || 'https://images.pexels.com/photos/7580937/pexels-photo-7580937.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=100&w=100'} 
-              alt={user.name} 
-              className="w-10 h-10 rounded-full object-cover"
-              data-testid="user-avatar"
-            />
-            <div className="hidden lg:block flex-1 min-w-0">
-              <p className="font-semibold text-sm truncate" data-testid="user-name">{user.name}</p>
-              <p className="text-xs text-muted-foreground truncate" data-testid="user-email">{user.email}</p>
+    <aside className="fixed left-0 top-0 h-screen w-64 bg-background/95 backdrop-blur-xl border-r border-border/50 z-40">
+      <div className="flex flex-col h-full">
+        {/* Logo */}
+        <div className="p-6 border-b border-border/50">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-r from-primary to-primary/70 flex items-center justify-center">
+              <TrendingUp className="w-5 h-5 text-white" />
             </div>
+            <span className="font-bold text-xl">TradeTrack<span className="text-primary">Pro</span></span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">Professional Trading Platform</p>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = location.pathname === item.path;
+            
+            return (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={`
+                  flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200
+                  ${isActive 
+                    ? 'bg-primary text-primary-foreground shadow-lg' 
+                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+                  }
+                `}
+              >
+                <Icon className={`w-4 h-4 ${isActive ? 'text-primary-foreground' : ''}`} />
+                <span className="flex-1">{item.label}</span>
+                {item.highlight && !isActive && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">
+                    AI
+                  </span>
+                )}
+              </NavLink>
+            );
+          })}
+        </nav>
+
+        {/* User Section */}
+        {user && (
+          <div className="p-4 border-t border-border/50">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-r from-primary/20 to-primary/10 flex items-center justify-center">
+                <span className="text-primary font-semibold text-sm">
+                  {user.email?.[0]?.toUpperCase() || 'U'}
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{user.name || user.email?.split('@')[0]}</p>
+                <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+              </div>
+            </div>
+            <button
+              onClick={logout}
+              className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Sign Out</span>
+            </button>
           </div>
         )}
-        <button
-          onClick={logout}
-          data-testid="logout-button"
-          className="w-full flex items-center justify-center lg:justify-start gap-3 px-3 py-3 rounded-xl bg-destructive/10 text-destructive hover:bg-destructive hover:text-destructive-foreground transition-all font-semibold"
-        >
-          <LogOut className="w-5 h-5" />
-          <span className="hidden lg:block">Sign Out</span>
-        </button>
       </div>
     </aside>
   );
