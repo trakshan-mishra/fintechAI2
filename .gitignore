@@ -93,3 +93,10 @@ frontend/node_modules/.cache/default-development/4.pack
 # Environment files
 *.env
 *.env.*
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

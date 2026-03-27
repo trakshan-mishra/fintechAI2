@@ -29,27 +29,31 @@ function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<LandingPage />} />
-            {/* Firebase-based auth — single page handles signup + login */}
-            <Route path="/sign-in" element={<SignupLogin />} />
-            <Route path="/sign-up" element={<SignupLogin />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/transactions" element={<Transactions />} />
-            <Route path="/ai-chat" element={<AIChat />} />
-            <Route path="/scanner" element={<Scanner />} />
-            <Route path="/trading" element={<TradingDashboard />} />
-            <Route path="/invoices" element={<Invoices />} />
-            <Route path="/tax" element={<TaxSummary />} />
-            <Route path="/markets" element={<Markets />} />
-            <Route path="/markets/coin/:coinId" element={<CoinDetail />} />
-            <Route path="/markets/asset/:symbol" element={<AssetDetail />} />
-            <Route path="/portfolio" element={<Portfolio />} />
-            <Route path="/settings" element={<Settings />} />
-          </Routes>
-          <Toaster position="top-right" />
-        </BrowserRouter>
+        <div className="min-h-screen w-full overflow-x-hidden bg-background">
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/sign-in" element={<SignupLogin />} />
+              <Route path="/sign-up" element={<SignupLogin />} />
+
+              {/* Protected Layout Wrapper */}
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/transactions" element={<Transactions />} />
+              <Route path="/ai-chat" element={<AIChat />} />
+              <Route path="/scanner" element={<Scanner />} />
+              <Route path="/trading" element={<TradingDashboard />} />
+              <Route path="/invoices" element={<Invoices />} />
+              <Route path="/tax" element={<TaxSummary />} />
+              <Route path="/markets" element={<Markets />} />
+              <Route path="/markets/coin/:coinId" element={<CoinDetail />} />
+              <Route path="/markets/asset/:symbol" element={<AssetDetail />} />
+              <Route path="/portfolio" element={<Portfolio />} />
+              <Route path="/settings" element={<Settings />} />
+            </Routes>
+
+            <Toaster position="top-right" />
+          </BrowserRouter>
+        </div>
       </ThemeProvider>
     </AuthProvider>
   );

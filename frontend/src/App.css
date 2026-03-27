@@ -69,3 +69,24 @@ select:focus {
 .animate-pulse {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+/* Prevent horizontal scroll bugs */
+body {
+  overflow-x: hidden;
+}
+
+/* Fix images/videos */
+img, video {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Fix cards on small screens */
+.card {
+  width: 100%;
+}
+
+/* Mobile typography */
+@media (max-width: 640px) {
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.25rem; }
+}

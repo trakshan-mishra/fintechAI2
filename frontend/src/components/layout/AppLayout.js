@@ -1,6 +1,5 @@
 import React from 'react';
 import Sidebar from './Sidebar';
-import MobileNav from './MobileNav';
 
 const AppLayout = ({ children }) => {
   return (
@@ -10,11 +9,11 @@ const AppLayout = ({ children }) => {
       
       <Sidebar />
       
-      <main className="md:ml-20 lg:ml-64 p-4 md:p-8 pb-24 md:pb-8 relative z-10" data-testid="main-content">
+      <main className="md:ml-64 p-4 md:p-8 relative z-10">
         {children}
       </main>
       
-      <MobileNav />
+     
     </div>
   );
 };

@@ -235,8 +235,11 @@ useEffect(() => {
                     </div>
                   </div>
                   <p className="text-xl font-mono font-bold mb-1">
-                    ${(coin?.current_price ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    ₹{(coin?.current_price ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                   </p>
+                  {coin.price_usd != null && (
+                    <p className="text-xs text-muted-foreground">${coin.price_usd.toLocaleString('en-US', { maximumFractionDigits: 2 })} USD</p>
+                  )}
                   <p className={`text-sm font-semibold ${coin.price_change_percentage_24h > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                     {coin.price_change_percentage_24h > 0 ? '+' : ''}{(coin?.price_change_percentage_24h ?? 0).toFixed(2)}%
                   </p>
