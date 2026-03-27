@@ -79,18 +79,27 @@ const { login, signInWithGoogle, user } = useAuth();
 
   // ── Google sign-in (Firebase) ─────────────────────────────────────────────
   const handleGoogleLogin = async () => {
-    
-  setLoading(true);
-  try {
-    await signInWithGoogle();
-    toast.success('Signed in with Google!');
-  } catch (error) {
-    console.error(error);
-    toast.error(error.message || 'Google sign-in failed');
-  } finally {
-    setLoading(false);
-  }
-};
+    setLoading(true);
+    try {
+      // signInWithGoogle must return the Firebase UserCredential
+      const result = await signInWithGoogle();
+      const firebaseUser = result?.user;
+      if (!firebaseUser) throw new Error('No Firebase user returned');
+
+      // Get Firebase ID token and exchange it for a backend session token
+      const idToken = await firebaseUser.getIdToken();
+      const response = await axios.post(`${API_URL}/auth/google`, { id_token: idToken });
+
+      login(response.data.session_token, response.data.user);
+      toast.success('Signed in with Google!');
+      navigate('/dashboard');
+    } catch (error) {
+      console.error(error);
+      toast.error(error.response?.data?.detail || error.message || 'Google sign-in failed');
+    } finally {
+      setLoading(false);
+    }
+  };
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-background">
       <div className="bg-orb-1" />

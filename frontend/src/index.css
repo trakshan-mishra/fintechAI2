@@ -216,3 +216,45 @@
 .dark .bg-orb-2 {
   background: radial-gradient(circle, rgba(168, 85, 247, 0.06) 0%, transparent 70%);
 }
+/* 🔥 RESPONSIVE FIXES */
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+/* Mobile safe padding */
+.container-safe {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+@media (min-width: 768px) {
+  .container-safe {
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
+}
+
+/* Prevent layout breaking */
+* {
+  max-width: 100%;
+}
+
+/* Fix flex overflow */
+.flex-fix {
+  min-width: 0;
+}
+
+/* Scroll fix for mobile */
+.scroll-safe {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Safe area for Android/iOS */
+.safe-area {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}

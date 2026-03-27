@@ -441,136 +441,54 @@ def fetch_market_data(symbols: list, default_names: dict = None):
             logger.warning(f"Could not fetch data for {sym}: {e}")
     return results
 
-def search_yfinance_global(query: str) -> list:
-    results = []
-    query = query.upper().strip()
 
-    # Special commodity mapping
-    commodity_map = {
-        "GOLD": "GC=F",
-        "SILVER": "SI=F",
-        "CRUDE": "CL=F",
-        "OIL": "CL=F",
-        "BRENT": "BZ=F",
-        "GAS": "NG=F",
-        "COPPER": "HG=F"
-    }
-
-    if query in commodity_map:
-        query = commodity_map[query]
-
-    try:
-        ticker = yf.Ticker(query)
-        info = ticker.fast_info
-
-        if info.last_price and info.last_price > 0:
-            hist = ticker.history(period="5d")
-
-            name = query
-            try:
-                ti = ticker.info
-                name = ti.get("longName") or ti.get("shortName") or query
-            except:
-                pass
-
-            prev = info.previous_close or info.last_price
-
-            return [{
-                "symbol": query,
-                "name": name,
-                "price": round(info.last_price, 4),
-                "change": round(info.last_price - prev, 4),
-                "change_percent": round(((info.last_price - prev) / prev) * 100, 2),
-                "high": round(info.day_high or 0, 4),
-                "low": round(info.day_low or 0, 4),
-                "volume": int(info.last_volume or 0),
-                "currency": getattr(info, 'currency', 'USD'),
-                "history": [
-                    {"date": d.strftime("%Y-%m-%d"), "close": float(row["Close"])}
-                    for d, row in hist.iterrows()
-                ] if not hist.empty else []
-            }]
-    except Exception:
-        pass
-
-    return []
 # ─── Market Endpoints ─────────────────────────────────────────────────────────
 
+def _convert_crypto_to_inr(data: list, usd_inr: float) -> list:
+    """Convert CoinGecko USD fields to INR, preserve price_usd for reference."""
+    price_fields = ["current_price", "high_24h", "low_24h", "ath", "atl", "price_change_24h"]
+    volume_fields = ["market_cap", "total_volume", "fully_diluted_valuation"]
+    for coin in data:
+        coin["price_usd"] = coin.get("current_price")
+        coin["market_cap_usd"] = coin.get("market_cap")
+        for f in price_fields:
+            if coin.get(f) is not None:
+                raw = coin[f]
+                coin[f] = round(raw * usd_inr, 4 if abs(raw) < 1 else 2)
+        for f in volume_fields:
+            if coin.get(f) is not None:
+                coin[f] = round(coin[f] * usd_inr, 0)
+        if coin.get("sparkline_in_7d", {}).get("price"):
+            coin["sparkline_in_7d"]["price"] = [
+                round(p * usd_inr, 2) for p in coin["sparkline_in_7d"]["price"]
+            ]
+    return data
+
 @api_router.get("/markets/crypto")
-async def get_crypto(limit: int = 20):
-    cache_key = f"crypto_{limit}"
+async def get_crypto_prices(limit: int = 20):
+    cache_key = f"crypto_inr_{limit}"
     cached = cache_get(cache_key)
     if cached:
         return cached
-    # Primary: CoinGecko — real market caps, icons, sparklines
     try:
+        usd_inr = await get_live_usd_inr()
         async with httpx.AsyncClient(timeout=30.0) as c:
-            params = {
-                "vs_currency": "usd", "order": "market_cap_desc",
-                "per_page": min(limit, 100), "page": 1,
-                "sparkline": True, "price_change_percentage": "24h,7d"
-            }
-            resp = await c.get(
-                "https://api.coingecko.com/api/v3/coins/markets", params=params,
-                headers={"Accept": "application/json", "User-Agent": "TradeTrackPro/1.0"}
-            )
+            params = {"vs_currency": "usd", "order": "market_cap_desc", "per_page": min(limit, 100),
+                      "page": 1, "sparkline": True, "price_change_percentage": "24h,7d"}
+            resp = await c.get("https://api.coingecko.com/api/v3/coins/markets", params=params,
+                headers={"Accept": "application/json", "User-Agent": "GlobalMarketPulse/1.0"})
             if resp.status_code == 200:
-                data = resp.json()
+                data = _convert_crypto_to_inr(resp.json(), usd_inr)
                 cache_set(cache_key, data, ttl_seconds=90)
                 return data
-            logger.warning(f"CoinGecko returned {resp.status_code}, falling back to Binance")
     except Exception as e:
-        logger.error(f"CoinGecko error: {e}")
-    # Fallback: Binance with INR conversion
-    try:
-        COIN_META = {
-            "BTC":  {"name":"Bitcoin","id":"bitcoin","image":"https://assets.coingecko.com/coins/images/1/large/bitcoin.png"},
-            "ETH":  {"name":"Ethereum","id":"ethereum","image":"https://assets.coingecko.com/coins/images/279/large/ethereum.png"},
-            "BNB":  {"name":"BNB","id":"binancecoin","image":"https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png"},
-            "XRP":  {"name":"XRP","id":"ripple","image":"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png"},
-            "SOL":  {"name":"Solana","id":"solana","image":"https://assets.coingecko.com/coins/images/4128/large/solana.png"},
-            "ADA":  {"name":"Cardano","id":"cardano","image":"https://assets.coingecko.com/coins/images/975/large/cardano.png"},
-            "DOGE": {"name":"Dogecoin","id":"dogecoin","image":"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"},
-            "DOT":  {"name":"Polkadot","id":"polkadot","image":"https://assets.coingecko.com/coins/images/12171/large/polkadot.png"},
-            "MATIC":{"name":"Polygon","id":"matic-network","image":"https://assets.coingecko.com/coins/images/4713/large/matic-token-icon.png"},
-            "LTC":  {"name":"Litecoin","id":"litecoin","image":"https://assets.coingecko.com/coins/images/2/large/litecoin.png"},
-            "SHIB": {"name":"Shiba Inu","id":"shiba-inu","image":"https://assets.coingecko.com/coins/images/11939/large/shiba.png"},
-            "TRX":  {"name":"TRON","id":"tron","image":"https://assets.coingecko.com/coins/images/1094/large/tron-logo.png"},
-            "AVAX": {"name":"Avalanche","id":"avalanche-2","image":"https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png"},
-            "LINK": {"name":"Chainlink","id":"chainlink","image":"https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png"},
-            "UNI":  {"name":"Uniswap","id":"uniswap","image":"https://assets.coingecko.com/coins/images/12504/large/uniswap-uni.png"},
-        }
-        async with httpx.AsyncClient(timeout=15.0) as c:
-            res = await c.get("https://api.binance.com/api/v3/ticker/24hr")
-            usd_inr = await get_live_usd_inr()
-            data = res.json()
-        coins = sorted(
-            [d for d in data if d["symbol"].endswith("USDT")],
-            key=lambda x: float(x.get("quoteVolume", 0)), reverse=True
-        )[:limit]
-        result = []
-        for d in coins:
-            sym = d["symbol"].replace("USDT", "")
-            meta = COIN_META.get(sym, {"name": sym, "id": sym.lower(),
-                "image": f"https://assets.coingecko.com/coins/images/1/large/bitcoin.png"})
-            price_inr = round(float(d["lastPrice"]) * usd_inr, 2)
-            result.append({
-                "id": meta["id"], "symbol": sym.lower(), "name": meta["name"],
-                "image": meta["image"], "current_price": price_inr,
-                "market_cap": 0,
-                "price_change_percentage_24h": float(d["priceChangePercent"]),
-                "total_volume": float(d.get("volume", 0)),
-                "sparkline_in_7d": {"price": []},
-            })
-        return result
-    except Exception as e:
-        logger.error(f"Binance fallback error: {e}")
-        return get_mock_crypto_data()
+        logger.error(f"Crypto API error: {e}")
+    return cached or get_mock_crypto_data()
 
-        
 @api_router.get("/markets/crypto/search")
 async def search_crypto(query: str):
     try:
+        usd_inr = await get_live_usd_inr()
         async with httpx.AsyncClient(timeout=30.0) as c:
             search_resp = await c.get("https://api.coingecko.com/api/v3/search",
                 params={"query": query}, headers={"Accept": "application/json"})
@@ -585,7 +503,7 @@ async def search_crypto(query: str):
                         "sparkline": True, "price_change_percentage": "24h,7d"},
                 headers={"Accept": "application/json"})
             if price_resp.status_code == 200:
-                return {"coins": price_resp.json()}
+                return {"coins": _convert_crypto_to_inr(price_resp.json(), usd_inr)}
             return {"coins": coins}
     except Exception as e:
         logger.error(f"Crypto search error: {e}")
@@ -613,198 +531,91 @@ async def get_commodities():
     cached = cache_get(cache_key)
     if cached:
         return cached
+    default_commodities = {
+        "GC=F": "Gold", "SI=F": "Silver", "CL=F": "Crude Oil (WTI)",
+        "BZ=F": "Crude Oil (Brent)", "NG=F": "Natural Gas", "HG=F": "Copper",
+    }
+    results = await asyncio.to_thread(fetch_market_data, list(default_commodities.keys()), default_commodities)
+    if results:
+        cache_set(cache_key, results, ttl_seconds=60)
+    return results or []
 
-    av_key = os.getenv("ALPHA_VANTAGE_API_KEY", "")
-    usd_inr = 83.5
-    results = []
+# ─── Global Search — Search any asset worldwide ──────────────────────────────
 
-    if av_key:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            # Live USD/INR rate
-            try:
-                fx = await client.get("https://www.alphavantage.co/query",
-                    params={"function": "CURRENCY_EXCHANGE_RATE",
-                            "from_currency": "USD", "to_currency": "INR", "apikey": av_key})
-                if fx.status_code == 200:
-                    rate = float(fx.json().get("Realtime Currency Exchange Rate", {})
-                                 .get("5. Exchange Rate", 83.5) or 83.5)
-                    if rate > 0:
-                        usd_inr = rate
-            except Exception as e:
-                logger.warning(f"FX rate error: {e}")
+@api_router.get("/markets/search")
+async def global_search(query: str, asset_type: str = "auto"):
+    if not query or len(query.strip()) < 1:
+        raise HTTPException(status_code=400, detail="Query required")
 
-            # Energy & metals via AV commodity functions
-            for func, name, sym, unit in [
-                ("WTI",         "Crude Oil (WTI)",  "OIL",    "per barrel"),
-                ("BRENT",       "Crude Oil (Brent)", "BRENT",  "per barrel"),
-                ("NATURAL_GAS", "Natural Gas",       "NG",     "per mmbtu"),
-                ("COPPER",      "Copper",            "COPPER", "per metric ton"),
-                ("ALUMINUM",    "Aluminium",         "ALUM",   "per metric ton"),
-                ("WHEAT",       "Wheat",             "WHEAT",  "per bushel"),
-            ]:
-                try:
-                    r = await client.get("https://www.alphavantage.co/query",
-                        params={"function": func, "interval": "monthly", "apikey": av_key})
-                    if r.status_code == 200:
-                        data = r.json().get("data", [])
-                        if len(data) >= 2:
-                            latest = float(data[0].get("value", 0) or 0)
-                            prev   = float(data[1].get("value", 0) or 0)
-                            if latest > 0:
-                                chg = latest - prev
-                                pct = (chg / prev * 100) if prev else 0
-                                results.append({"name": name, "symbol": sym,
-                                    "price": round(latest * usd_inr, 2), "unit": unit,
-                                    "change": round(chg * usd_inr, 2),
-                                    "change_percent": round(pct, 2),
-                                    "price_usd": round(latest, 2)})
-                except Exception as e:
-                    logger.warning(f"AV commodity error {func}: {e}")
+    query = query.strip()
+    results = {"query": query, "stocks": [], "crypto": [], "commodities": [], "polymarket": []}
 
-            # Gold & Silver via ETF proxies (GLD, SLV)
-            for ticker, name, sym, unit in [
-                ("GLD", "Gold",   "GOLD",   "per oz"),
-                ("SLV", "Silver", "SILVER", "per oz"),
-            ]:
-                try:
-                    r = await client.get("https://www.alphavantage.co/query",
-                        params={"function": "GLOBAL_QUOTE", "symbol": ticker, "apikey": av_key})
-                    if r.status_code == 200:
-                        q = r.json().get("Global Quote", {})
-                        price = float(q.get("05. price", 0) or 0)
-                        change = float(q.get("09. change", 0) or 0)
-                        pct = float((q.get("10. change percent", "0%") or "0%").replace("%", ""))
-                        if price > 0:
-                            results.append({"name": name, "symbol": sym,
-                                "price": round(price * usd_inr, 2), "unit": unit,
-                                "change": round(change * usd_inr, 2),
-                                "change_percent": round(pct, 2),
-                                "price_usd": round(price, 2)})
-                except Exception as e:
-                    logger.warning(f"AV gold/silver error {ticker}: {e}")
+    async def search_stocks():
+        try:
+            stock_results = await asyncio.to_thread(search_yfinance_global, query)
+            results["stocks"] = stock_results
+        except Exception as e:
+            logger.warning(f"Stock search error: {e}")
 
-    if not results:
-        logger.warning("Alpha Vantage commodities unavailable — using fallback data")
-        results = [
-            {"name": "Gold",            "symbol": "GOLD",   "price": round(2320*usd_inr,2), "unit": "per oz",     "change": round(-8.5*usd_inr,2),   "change_percent": -0.37, "price_usd": 2320.0},
-            {"name": "Silver",          "symbol": "SILVER", "price": round(27.2*usd_inr,2), "unit": "per oz",     "change": round(0.12*usd_inr,2),   "change_percent":  0.46, "price_usd":   27.2},
-            {"name": "Crude Oil (WTI)", "symbol": "OIL",    "price": round(79.3*usd_inr,2), "unit": "per barrel", "change": round(1.50*usd_inr,2),   "change_percent":  1.76, "price_usd":   79.3},
-            {"name": "Natural Gas",     "symbol": "NG",     "price": round(2.94*usd_inr,2), "unit": "per mmbtu",  "change": round(-0.06*usd_inr,2),  "change_percent": -2.15, "price_usd":    2.94},
-            {"name": "Copper",          "symbol": "COPPER", "price": round(4.15*usd_inr,2), "unit": "per lb",     "change": round(0.03*usd_inr,2),   "change_percent":  0.73, "price_usd":    4.15},
-        ]
+    async def search_crypto_fn():
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as c:
+                r = await c.get("https://api.coingecko.com/api/v3/search",
+                    params={"query": query}, headers={"Accept": "application/json"})
+                if r.status_code == 200:
+                    coins = r.json().get("coins", [])[:5]
+                    if coins:
+                        ids = ",".join([coin["id"] for coin in coins])
+                        pr = await c.get("https://api.coingecko.com/api/v3/coins/markets",
+                            params={"vs_currency": "usd", "ids": ids, "sparkline": True,
+                                    "price_change_percentage": "24h,7d"},
+                            headers={"Accept": "application/json"})
+                        if pr.status_code == 200:
+                            results["crypto"] = pr.json()
+                            return
+                    results["crypto"] = coins
+        except Exception as e:
+            logger.warning(f"Crypto search error: {e}")
 
-    cache_set(cache_key, results, ttl_seconds=600)
+    async def search_sentiment():
+        try:
+            poly = await get_polymarket_sentiment(query)
+            results["polymarket"] = poly.get("markets", [])
+        except Exception:
+            pass
+
+    if asset_type == "auto":
+        await asyncio.gather(search_stocks(), search_crypto_fn(), search_sentiment())
+    elif asset_type == "stock":
+        await search_stocks()
+    elif asset_type == "crypto":
+        await search_crypto_fn()
+    elif asset_type == "commodity":
+        await search_stocks()
+    else:
+        await asyncio.gather(search_stocks(), search_crypto_fn(), search_sentiment())
+
     return results
 
-# ===== AI PREDICT ENDPOINTS =====
+@api_router.get("/markets/stocks/search")
+async def search_stock(query: str):
+    results = await asyncio.to_thread(search_yfinance_global, query)
+    if not results:
+        raise HTTPException(status_code=404, detail="Stock not found. Try ticker symbol (e.g., AAPL, RELIANCE, TSLA)")
+    return results[0]
+
+# ─── Polymarket Endpoint ─────────────────────────────────────────────────────
+
+@api_router.get("/markets/sentiment")
+async def get_sentiment(query: str):
+    poly = await get_polymarket_sentiment(query)
+    return poly
+
+# ─── Crypto Prediction ────────────────────────────────────────────────────────
 
 @api_router.get("/markets/crypto/predict/{symbol}")
-async def predict_crypto(symbol: str, authorization: Optional[str] = Header(None)):
-    """AI-powered crypto price prediction with live CoinGecko data"""
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        live_data = {}
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                search_resp = await client.get(
-                    f"https://api.coingecko.com/api/v3/search?query={symbol}",
-                    headers={"Accept": "application/json"}
-                )
-                coin_id = symbol.lower()
-                if search_resp.status_code == 200:
-                    coins = search_resp.json().get("coins", [])
-                    if coins:
-                        coin_id = coins[0]["id"]
-                price_resp = await client.get(
-                    "https://api.coingecko.com/api/v3/coins/markets",
-                    params={"vs_currency": "inr", "ids": coin_id,
-                            "price_change_percentage": "1h,24h,7d", "sparkline": False},
-                    headers={"Accept": "application/json"}
-                )
-                if price_resp.status_code == 200:
-                    data = price_resp.json()
-                    if data:
-                        d = data[0]
-                        live_data = {
-                            "name": d.get("name", symbol.upper()),
-                            "price_inr": d.get("current_price", 0),
-                            "price_usd": d.get("current_price", 0) / 83.5,
-                            "change_1h": d.get("price_change_percentage_1h_in_currency", 0),
-                            "change_24h": d.get("price_change_percentage_24h", 0),
-                            "change_7d": d.get("price_change_percentage_7d_in_currency", 0),
-                            "high_24h_inr": d.get("high_24h", 0),
-                            "low_24h_inr": d.get("low_24h", 0),
-                            "market_cap_inr": d.get("market_cap", 0),
-                            "volume_24h_inr": d.get("total_volume", 0),
-                            "ath_inr": d.get("ath", 0),
-                            "ath_change_pct": d.get("ath_change_percentage", 0),
-                            "market_cap_rank": d.get("market_cap_rank", "N/A"),
-                        }
-        except Exception as e:
-            logger.warning(f"Live data fetch failed: {e}")
-
-        today = datetime.now().strftime("%B %d, %Y")
-        if live_data:
-            prompt = f"""Today is {today}. Analyzing {live_data['name']} ({symbol.upper()}) with LIVE market data:
-
-- Current Price: ₹{live_data['price_inr']:,.2f} (${live_data['price_usd']:,.2f} USD)
-- 1H Change: {live_data['change_1h']:+.2f}%
-- 24H Change: {live_data['change_24h']:+.2f}%
-- 7D Change: {live_data['change_7d']:+.2f}%
-- 24H High/Low: ₹{live_data['high_24h_inr']:,.2f} / ₹{live_data['low_24h_inr']:,.2f}
-- Market Cap: ₹{live_data['market_cap_inr']/1e9:.2f}B | Volume: ₹{live_data['volume_24h_inr']/1e9:.2f}B
-- ATH: ₹{live_data['ath_inr']:,.2f} ({live_data['ath_change_pct']:+.2f}% from ATH)
-- Rank: #{live_data['market_cap_rank']}
-
-Provide:
-1. **Short-term Prediction (24-48 hours)** — reference current price ₹{live_data['price_inr']:,.2f}
-2. **Key Factors** — what's driving price right now
-3. **Risk Assessment** — current volatility and ATH distance
-4. **Trading Recommendation** — specific price levels to watch"""
-        else:
-            prompt = f"""Today is {today}. Analyze {symbol.upper()} crypto (live data unavailable).
-1. Short-term Prediction (24-48 hours)
-2. Key Factors Affecting Price
-3. Risk Assessment
-4. Trading Recommendation (Buy/Hold/Sell)"""
-
-        system_msg = f"You are a professional cryptocurrency analyst providing analysis on {today}. Use INR (₹) for all prices."
-        response = await call_llm(system_msg, prompt, max_tokens=4096, timeout=30.0)
-        return {"symbol": symbol.upper(), "prediction": response, "live_data": live_data}
-    except Exception as e:
-        logger.error(f"Crypto prediction error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.get("/markets/stocks/predict/{symbol}")
-async def predict_stock(symbol: str, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        prompt = f"""Analyze {symbol.upper()} Indian stock (NSE/BSE) and provide:
-1. Short-term outlook (1-2 weeks)
-2. Key factors (sector trends, company news, macro environment)
-3. Technical levels (support/resistance in INR)
-4. Risk assessment
-5. Recommendation (Buy/Hold/Sell) with target price range in INR
-
-Focus on Indian market context, SEBI regulations, and retail investor perspective."""
-        response = await call_llm(
-            "You are an expert Indian stock market analyst with deep knowledge of NSE/BSE listed companies, Indian economy, and SEBI regulations.",
-            prompt, max_tokens=4096, timeout=30.0
-        )
-        return {"symbol": symbol.upper(), "prediction": response}
-    except Exception as e:
-        logger.error(f"Stock prediction error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.get("/markets/commodities/predict/{symbol}")
-async def predict_commodity(symbol: str, authorization: Optional[str] = Header(None)):
-    user_id = await get_user_from_token(authorization)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+async def predict_crypto(symbol: str):
+    symbol = symbol.upper().replace("/USDT", "").replace("USDT", "")
     try:
         today = datetime.now().strftime("%B %d, %Y %H:%M UTC")
         live, poly_data = await asyncio.gather(
@@ -826,11 +637,11 @@ async def predict_commodity(symbol: str, authorization: Optional[str] = Header(N
                 poly_context += f"  Q: {m['question']}\n"
                 for i, outcome in enumerate(m.get("outcomes", [])):
                     price = (
-                        m.get("outcome_prices", [])[i]
-                        if i < len(m.get("outcome_prices", []))
-                        else "?"
-                    )
-                    poly_context += f"    {outcome}: {price}\n"
+                m.get("outcome_prices", [])[i]
+                if i < len(m.get("outcome_prices", []))
+                else "?"
+            )
+            poly_context += f"    {outcome}: {price}\n"
 
 
         prompt = f"""LIVE DATA — {symbol} — {today}
@@ -1023,6 +834,101 @@ async def get_transaction_stats():
         "balance": totals.get("total_income", 0) - totals.get("total_expense", 0),
         "transaction_count": totals.get("transaction_count", 0)
     }
+
+# ─── Auth Endpoints ───────────────────────────────────────────────────────────
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str
+
+async def verify_firebase_token(id_token: str) -> dict:
+    """Verify Firebase ID token using Google's public key endpoint."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(
+                f"https://identitytoolkit.googleapis.com/v1/accounts:lookup",
+                params={"key": os.getenv("FIREBASE_WEB_API_KEY", "")},
+                # Use tokenId to verify
+            )
+        # Simpler: verify via Google's tokeninfo endpoint
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(
+                "https://identitytoolkit.googleapis.com/v1/accounts:lookup",
+                params={"key": os.getenv("FIREBASE_WEB_API_KEY", "")},
+                json={"idToken": id_token},
+            )
+            if r.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid Firebase token")
+            users = r.json().get("users", [])
+            if not users:
+                raise HTTPException(status_code=401, detail="User not found")
+            return users[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Firebase token verification error: {e}")
+        raise HTTPException(status_code=401, detail="Token verification failed")
+
+@api_router.post("/auth/google")
+async def google_auth(data: GoogleAuthRequest):
+    """Exchange Firebase ID token for a session token."""
+    try:
+        firebase_user = await verify_firebase_token(data.id_token)
+
+        firebase_uid = firebase_user.get("localId")
+        email = firebase_user.get("email", "")
+        name = firebase_user.get("displayName", email.split("@")[0] if email else "User")
+        photo_url = firebase_user.get("photoUrl", "")
+
+        # Upsert user in DB
+        session_token = f"sess_{uuid.uuid4().hex}"
+        user_doc = {
+            "firebase_uid": firebase_uid,
+            "email": email,
+            "name": name,
+            "photo_url": photo_url,
+            "session_token": session_token,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.users.update_one(
+            {"firebase_uid": firebase_uid},
+            {"$set": user_doc, "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+
+        return {
+            "session_token": session_token,
+            "user": {
+                "id": firebase_uid,
+                "name": name,
+                "email": email,
+                "photo_url": photo_url,
+                "auth_method": "google",
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Google auth error: {e}")
+        raise HTTPException(status_code=500, detail="Authentication failed")
+
+@api_router.get("/auth/me")
+async def get_current_user(authorization: Optional[str] = Header(None)):
+    """Return current user from session token."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = authorization.split(" ", 1)[1]
+    user = await db.users.find_one({"session_token": token}, {"_id": 0, "session_token": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    return user
+
+@api_router.post("/auth/logout")
+async def logout(authorization: Optional[str] = Header(None)):
+    """Invalidate session token."""
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1]
+        await db.users.update_one({"session_token": token}, {"$unset": {"session_token": ""}})
+    return {"message": "Logged out"}
 
 # ─── Health & Root ────────────────────────────────────────────────────────────
 

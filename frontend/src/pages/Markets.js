@@ -157,13 +157,11 @@ const Markets = () => {
                           <Badge value={change} />
                         </div>
                         {coin.current_price ? (
-                          <p className="text-xl font-mono font-bold mb-1">${coin.current_price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
+                          <p className="text-xl font-mono font-bold mb-1">₹{coin.current_price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
                         ) : <p className="text-xs text-muted-foreground mb-2">Loading...</p>}
-                        <p className="text-xs text-muted-foreground mb-2">MCap: ${((coin.market_cap || 0) / 1e9).toFixed(1)}B</p>
-                        {spark.length >= 5
-                          ? <ResponsiveContainer width="100%" height={40}><LineChart data={spark}><Line type="monotone" dataKey="value" stroke={isUp ? '#10b981' : '#ef4444'} strokeWidth={1.5} dot={false} /></LineChart></ResponsiveContainer>
-                          : <div className={`h-0.5 w-full rounded-full my-3 opacity-30 ${isUp ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                        }
+                        {coin.price_usd != null && <p className="text-xs text-muted-foreground">${coin.price_usd.toLocaleString('en-US', { maximumFractionDigits: 4 })} USD</p>}
+                        <p className="text-xs text-muted-foreground mb-2">MCap: ₹{((coin.market_cap || 0) / 1e9).toFixed(1)}B</p>
+                        {spark.length > 0 && <ResponsiveContainer width="100%" height={40}><LineChart data={spark}><Line type="monotone" dataKey="value" stroke={isUp ? '#10b981' : '#ef4444'} strokeWidth={1.5} dot={false} /></LineChart></ResponsiveContainer>}
                         <p className="text-xs text-muted-foreground text-center mt-2 flex items-center justify-center gap-1"><ExternalLink className="w-3 h-3" />Full chart</p>
                       </CardContent>
                     </Card>
