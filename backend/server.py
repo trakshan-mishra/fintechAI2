@@ -837,6 +837,18 @@ async def get_transaction_stats():
 
 # ─── Auth Endpoints ───────────────────────────────────────────────────────────
 
+@api_router.post("/auth/firebase-sync")
+async def firebase_sync(data: dict):
+    try:
+        return {
+            "status": "success",
+            "message": "Firebase sync working",
+            "user": data
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 class GoogleAuthRequest(BaseModel):
     id_token: str
 

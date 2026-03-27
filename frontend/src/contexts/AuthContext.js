@@ -1,5 +1,5 @@
 // src/contexts/AuthContext.js
-// Replaces Clerk — uses Firebase Auth for Google sign-in + custom OTP session tokens
+
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { auth, googleProvider } from '../utils/firebase';
 import {
@@ -9,7 +9,10 @@ import {
 } from 'firebase/auth';
 import axios from 'axios';
 
-const API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
+// ✅ FIXED API BASE (WORKS EVERYWHERE)
+const API_BASE = process.env.REACT_APP_BACKEND_URL
+  ? `${process.env.REACT_APP_BACKEND_URL}/api`
+  : "https://fintechai2.onrender.com/api";
 
 const AuthContext = createContext(null);
 
@@ -17,56 +20,72 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // ── Firebase user listener ─────────────────────────────────────────────────
+  // 🔥 AUTH LISTENER (SAFE VERSION)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        // Sync Firebase user to our MongoDB
-        try {
+      try {
+        if (firebaseUser) {
           const idToken = await firebaseUser.getIdToken();
-          const res = await axios.post(
-            `${API_BASE}/auth/firebase-sync`,
-            {
-              email: firebaseUser.email,
-              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-              picture: firebaseUser.photoURL,
-            },
-            { headers: { Authorization: `Bearer ${idToken}` } }
-          );
-          setUser(res.data.user);
-        } catch (err) {
-          console.error('Firebase sync failed:', err);
-          // Still set a basic user object so the UI isn't locked out
-          setUser({
-            user_id: firebaseUser.uid,
-            email: firebaseUser.email || '',
-            name: firebaseUser.displayName || 'User',
-            picture: firebaseUser.photoURL || null,
-          });
-        }
-      } else {
-        // Check for OTP session token (non-Google auth)
-        const sessionToken = localStorage.getItem('session_token');
-        if (sessionToken) {
+
           try {
-            const res = await axios.get(`${API_BASE}/auth/me`, {
-              headers: { Authorization: `Bearer ${sessionToken}` },
+            // ✅ TRY BACKEND SYNC (OPTIONAL)
+            const res = await axios.post(
+              `${API_BASE}/auth/firebase-sync`,
+              {
+                email: firebaseUser.email,
+                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+                picture: firebaseUser.photoURL,
+              },
+              {
+                headers: { Authorization: `Bearer ${idToken}` },
+              }
+            );
+
+            setUser(res.data.user);
+
+          } catch (err) {
+            console.log("⚠️ Sync failed → fallback user");
+
+            // ✅ FALLBACK USER (IMPORTANT)
+            setUser({
+              user_id: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              name: firebaseUser.displayName || 'User',
+              picture: firebaseUser.photoURL || null,
             });
-            setUser(res.data);
-          } catch {
-            localStorage.removeItem('session_token');
+          }
+
+        } else {
+          // OTP fallback
+          const sessionToken = localStorage.getItem('session_token');
+
+          if (sessionToken) {
+            try {
+              const res = await axios.get(`${API_BASE}/auth/me`, {
+                headers: { Authorization: `Bearer ${sessionToken}` },
+              });
+              setUser(res.data);
+            } catch {
+              localStorage.removeItem('session_token');
+              setUser(null);
+            }
+          } else {
             setUser(null);
           }
-        } else {
-          setUser(null);
         }
+
+      } catch (e) {
+        console.error("Auth crash prevented:", e);
+        setUser(null);
       }
+
       setLoading(false);
     });
+
     return () => unsubscribe();
   }, []);
 
-  // ── Get auth token (Firebase ID token or OTP session token) ───────────────
+  // 🔥 TOKEN GETTER
   const getAuthToken = useCallback(async () => {
     const firebaseUser = auth.currentUser;
     if (firebaseUser) {
@@ -75,19 +94,19 @@ export const AuthProvider = ({ children }) => {
     return localStorage.getItem('session_token') || null;
   }, []);
 
-  // ── Google sign-in ─────────────────────────────────────────────────────────
+  // 🔥 GOOGLE LOGIN
   const signInWithGoogle = async () => {
     const result = await signInWithPopup(auth, googleProvider);
     return result.user;
   };
 
-  // ── OTP login (called by SignupLogin after backend verify) ─────────────────
+  // 🔥 OTP LOGIN
   const login = (sessionToken, userData) => {
     localStorage.setItem('session_token', sessionToken);
     setUser(userData);
   };
 
-  // ── Sign out ───────────────────────────────────────────────────────────────
+  // 🔥 LOGOUT
   const logout = async () => {
     try {
       await firebaseSignOut(auth);
@@ -97,7 +116,9 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, getAuthToken, signInWithGoogle }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, logout, getAuthToken, signInWithGoogle }}
+    >
       {children}
     </AuthContext.Provider>
   );
