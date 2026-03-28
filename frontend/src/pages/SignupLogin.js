@@ -21,6 +21,11 @@ const SignupLogin = () => {
   const navigate = useNavigate();
 const { login, signInWithGoogle, user } = useAuth();
 
+  // Redirect if already logged in
+  useEffect(() => {
+    if (user) navigate('/dashboard');
+  }, [user, navigate]);
+
   const [authMethod, setAuthMethod] = useState('phone');
   const [step, setStep] = useState(1);
 

@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
+// Strip trailing slash so REACT_APP_BACKEND_URL=http://localhost:8000/ works fine
+const API_BASE = `${(process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000').replace(/\/$/, '')}/api`;
 
 let _getToken = null;
 export const setTokenGetter = (fn) => { _getToken = fn; };
@@ -50,9 +51,9 @@ export const api = {
   getCryptoData: (limit = 20) =>
     axios.get(`${API_BASE}/markets/crypto`, { params: { limit } }),
   getStockData: (query) =>
-    axios.get(`${API_BASE}/markets/stocks`, {params: {query}}),
+    axios.get(`${API_BASE}/markets/stocks`, { params: { query } }),
   getCommodityData: (query) =>
-    axios.get(`${API_BASE}/markets/commodities`, {params: {query}}),
+    axios.get(`${API_BASE}/markets/commodities`, { params: { query } }),
   searchCrypto: (query) =>
     axios.get(`${API_BASE}/markets/crypto/search`, { params: { query } }),
   searchStocks: (query) =>
