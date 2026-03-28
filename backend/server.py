@@ -416,29 +416,39 @@ async def get_polymarket_sentiment(query: str) -> dict:
 
 # ─── Market Data Helpers (yfinance - Global) ─────────────────────────────────
 
+def _fetch_single(sym: str, name: str) -> dict | None:
+    try:
+        info = yf.Ticker(sym).fast_info
+        prev = info.previous_close or 1
+        clean = sym.replace(".NS", "").replace(".BO", "")
+        return {
+            "symbol": clean, "name": name,
+            "price": round(info.last_price, 2),
+            "change": round(info.last_price - prev, 2),
+            "change_percent": round(((info.last_price - prev) / prev) * 100, 2),
+            "high": round(info.day_high, 2),
+            "low": round(info.day_low, 2),
+            "volume": int(info.last_volume or 0),
+            "currency": getattr(info, "currency", "USD"),
+        }
+    except Exception as e:
+        logger.warning(f"yfinance {sym}: {e}")
+        return None
+
 def fetch_market_data(symbols: list, default_names: dict = None):
     if not symbols:
         return []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    names = default_names or {}
+    order = {sym: i for i, sym in enumerate(symbols)}
     results = []
-    for sym in symbols:
-        try:
-            ticker = yf.Ticker(sym)
-            info = ticker.fast_info
-            name = (default_names or {}).get(sym, sym)
-            clean_symbol = sym.replace(".NS", "").replace(".BO", "")
-            results.append({
-                "symbol": clean_symbol,
-                "name": name,
-                "price": round(info.last_price, 2),
-                "change": round(info.last_price - info.previous_close, 2),
-                "change_percent": round(((info.last_price - info.previous_close) / info.previous_close) * 100, 2),
-                "high": round(info.day_high, 2),
-                "low": round(info.day_low, 2),
-                "volume": int(info.last_volume),
-                "currency": getattr(info, 'currency', 'USD'),
-            })
-        except Exception as e:
-            logger.warning(f"Could not fetch data for {sym}: {e}")
+    with ThreadPoolExecutor(max_workers=min(len(symbols), 8)) as exe:
+        futures = {exe.submit(_fetch_single, sym, names.get(sym, sym)): sym for sym in symbols}
+        for fut in as_completed(futures):
+            item = fut.result()
+            if item:
+                results.append(item)
+    results.sort(key=lambda x: order.get(x["symbol"], 999))
     return results
 
 
@@ -474,12 +484,12 @@ async def get_crypto_prices(limit: int = 20):
         usd_inr = await get_live_usd_inr()
         async with httpx.AsyncClient(timeout=30.0) as c:
             params = {"vs_currency": "usd", "order": "market_cap_desc", "per_page": min(limit, 100),
-                      "page": 1, "sparkline": True, "price_change_percentage": "24h,7d"}
+                      "page": 1, "sparkline": False, "price_change_percentage": "24h,7d"}
             resp = await c.get("https://api.coingecko.com/api/v3/coins/markets", params=params,
                 headers={"Accept": "application/json", "User-Agent": "GlobalMarketPulse/1.0"})
             if resp.status_code == 200:
                 data = _convert_crypto_to_inr(resp.json(), usd_inr)
-                cache_set(cache_key, data, ttl_seconds=90)
+                cache_set(cache_key, data, ttl_seconds=120)
                 return data
     except Exception as e:
         logger.error(f"Crypto API error: {e}")
@@ -522,7 +532,7 @@ async def get_stocks():
     }
     results = await asyncio.to_thread(fetch_market_data, list(default_stocks.keys()), default_stocks)
     if results:
-        cache_set(cache_key, results, ttl_seconds=30)
+        cache_set(cache_key, results, ttl_seconds=120)
     return results or []
 
 @api_router.get("/markets/commodities")
@@ -537,7 +547,7 @@ async def get_commodities():
     }
     results = await asyncio.to_thread(fetch_market_data, list(default_commodities.keys()), default_commodities)
     if results:
-        cache_set(cache_key, results, ttl_seconds=60)
+        cache_set(cache_key, results, ttl_seconds=180)
     return results or []
 
 # ─── Global Search — Search any asset worldwide ──────────────────────────────
@@ -837,20 +847,116 @@ async def get_transaction_stats():
 
 # ─── Auth Endpoints ───────────────────────────────────────────────────────────
 
-@api_router.post("/auth/firebase-sync")
-async def firebase_sync(data: dict):
-    try:
-        return {
-            "status": "success",
-            "message": "Firebase sync working",
-            "user": data
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+# In-memory OTP store  {phone_or_email: {otp_hash, name, expires}}
+_otp_store: dict = {}
 
+def _otp_key(phone_or_email: str) -> str:
+    return phone_or_email.strip().lower()
+
+class PhoneSignupRequest(BaseModel):
+    phone: str
+    name: str
+
+class EmailSignupRequest(BaseModel):
+    email: str
+    name: str
+
+class OTPVerifyRequest(BaseModel):
+    phone_or_email: str
+    otp: str
 
 class GoogleAuthRequest(BaseModel):
     id_token: str
+
+import hashlib as _hashlib
+
+def _gen_otp() -> str:
+    import random
+    return str(random.randint(100000, 999999))
+
+def _hash_otp(otp: str) -> str:
+    return _hashlib.sha256(otp.encode()).hexdigest()
+
+@api_router.post("/auth/signup/phone")
+async def signup_phone(data: PhoneSignupRequest):
+    """Send OTP to phone number (demo mode — returns OTP in response)."""
+    otp = _gen_otp()
+    key = _otp_key(data.phone)
+    _otp_store[key] = {
+        "otp_hash": _hash_otp(otp),
+        "name": data.name,
+        "expires": datetime.now(timezone.utc).timestamp() + 600,  # 10 min
+        "contact": data.phone,
+        "type": "phone",
+    }
+    logger.info(f"📱 OTP for {data.phone}: {otp}")
+    # In production: send via MSG91/Twilio. For demo, return in response.
+    return {"message": "OTP sent", "demo_otp": otp}
+
+@api_router.post("/auth/signup/email")
+async def signup_email(data: EmailSignupRequest):
+    """Send OTP to email address (demo mode — returns OTP in response)."""
+    otp = _gen_otp()
+    key = _otp_key(data.email)
+    _otp_store[key] = {
+        "otp_hash": _hash_otp(otp),
+        "name": data.name,
+        "expires": datetime.now(timezone.utc).timestamp() + 600,
+        "contact": data.email,
+        "type": "email",
+    }
+    logger.info(f"📧 OTP for {data.email}: {otp}")
+    return {"message": "OTP sent", "demo_otp": otp}
+
+@api_router.post("/auth/verify/otp")
+async def verify_otp(data: OTPVerifyRequest):
+    """Verify OTP and return session token."""
+    key = _otp_key(data.phone_or_email)
+    record = _otp_store.get(key)
+    if not record:
+        raise HTTPException(status_code=400, detail="OTP not found. Please request a new one.")
+    if datetime.now(timezone.utc).timestamp() > record["expires"]:
+        _otp_store.pop(key, None)
+        raise HTTPException(status_code=400, detail="OTP expired. Please request a new one.")
+    if _hash_otp(data.otp) != record["otp_hash"]:
+        raise HTTPException(status_code=400, detail="Invalid OTP. Please try again.")
+
+    # OTP is valid — clean up and create session
+    _otp_store.pop(key, None)
+    session_token = f"sess_{uuid.uuid4().hex}"
+    name = record.get("name", "User")
+    contact = record["contact"]
+    contact_type = record["type"]
+
+    # Upsert user in DB
+    user_doc = {
+        "name": name,
+        "session_token": session_token,
+        "auth_method": contact_type,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if contact_type == "phone":
+        user_doc["phone"] = contact
+        filter_q = {"phone": contact}
+    else:
+        user_doc["email"] = contact
+        filter_q = {"email": contact}
+
+    await db.users.update_one(
+        filter_q,
+        {"$set": user_doc, "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+
+    return {
+        "session_token": session_token,
+        "user": {
+            "name": name,
+            "email": contact if contact_type == "email" else "",
+            "phone": contact if contact_type == "phone" else "",
+            "auth_method": contact_type,
+        },
+    }
 
 async def verify_firebase_token(id_token: str) -> dict:
     """Verify Firebase ID token using Google's public key endpoint."""
@@ -922,6 +1028,11 @@ async def google_auth(data: GoogleAuthRequest):
     except Exception as e:
         logger.error(f"Google auth error: {e}")
         raise HTTPException(status_code=500, detail="Authentication failed")
+
+@api_router.post("/auth/firebase-sync")
+async def firebase_sync(data: GoogleAuthRequest, authorization: Optional[str] = Header(None)):
+    """Backwards-compat alias for /auth/google."""
+    return await google_auth(data)
 
 @api_router.get("/auth/me")
 async def get_current_user(authorization: Optional[str] = Header(None)):

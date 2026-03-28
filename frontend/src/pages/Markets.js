@@ -40,11 +40,18 @@ const Markets = () => {
   }, [user, loading, navigate]);
 
   const fetchMarketData = useCallback(async () => {
+    // Load crypto first — it's fastest and the default tab
     try {
-      const [c, s, co] = await Promise.all([api.getCryptoData(displayLimit), api.getStockData(), api.getCommodityData()]);
-      setCryptoData(c.data); setStockData(s.data); setCommodityData(co.data);
+      const c = await api.getCryptoData(displayLimit);
+      setCryptoData(c.data);
       setLastUpdated(new Date());
-    } catch { toast.error('Failed to load market data'); }
+    } catch { /* non-fatal */ }
+    // Load stocks + commodities in parallel after crypto is shown
+    try {
+      const [s, co] = await Promise.all([api.getStockData(), api.getCommodityData()]);
+      setStockData(s.data);
+      setCommodityData(co.data);
+    } catch { toast.error('Failed to load stock/commodity data'); }
   }, [displayLimit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
