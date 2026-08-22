@@ -40,7 +40,8 @@ RULES:
 - Be direct and actionable
 - Format responses with markdown for readability`;
     messages = [{ role: 'user', content: systemPrompt }, ...messages, { role: 'user', content: `${searchContext} User: ${query}` }];
-    const response = await callGemini(c.env.GEMINI_API_KEY, messages, true);
+    const allKeys = [c.env.GEMINI_API_KEYS, c.env.GEMINI_API_KEY].filter(Boolean).join(',');
+    const response = await callGemini(c.env.AI, messages, true, allKeys || undefined);
     messages.push({ role: 'assistant', content: response });
     const trimmed = messages.slice(-20);
     const userId = await optionalUserId(c);
@@ -80,10 +81,10 @@ Provide:
 7. **Recommendation** (Buy/Sell/Hold with price targets)
 8. **Risk Factors**`;
     const result = await callLlm(
-      c.env.GEMINI_API_KEY,
+      c.env.AI,
       'You are a professional financial research analyst. Use Google Search to pull live prices and recent news.',
       prompt,
-      { maxTokens: 4096, timeoutMs: 45000, useSearch: true },
+      { maxTokens: 4096, useSearch: true, geminiKeys: [c.env.GEMINI_API_KEYS, c.env.GEMINI_API_KEY].filter(Boolean).join(',') || undefined },
     );
     return c.json({ success: true, result, query: body.query, polymarket: polyData });
   } catch (e) {

@@ -26,6 +26,10 @@ const Markets = () => {
   const [commodityData, setCommodityData] = useState([]);
   const [cryptoLoading, setCryptoLoading] = useState(true);
   const [cryptoError, setCryptoError] = useState(false);
+  const [stocksLoading, setStocksLoading] = useState(true);
+  const [stocksError, setStocksError] = useState(false);
+  const [commoditiesLoading, setCommoditiesLoading] = useState(true);
+  const [commoditiesError, setCommoditiesError] = useState(false);
   const [activeTab, setActiveTab] = useState('crypto');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -62,11 +66,25 @@ const Markets = () => {
       setCryptoLoading(false);
     }
     // Stocks + commodities stay on the Worker (Yahoo Finance — works fine there).
+    setStocksLoading(true);
+    setStocksError(false);
+    setCommoditiesLoading(true);
+    setCommoditiesError(false);
     try {
-      const [s, co] = await Promise.all([api.getStockData(), api.getCommodityData()]);
-      setStockData(s.data);
-      setCommodityData(co.data);
-    } catch { /* non-fatal — keep crypto visible */ }
+      const [s, co] = await Promise.all([
+        api.getStockData().catch(e => { console.error('Stocks fetch error:', e); setStocksError(true); return { data: [] }; }),
+        api.getCommodityData().catch(e => { console.error('Commodities fetch error:', e); setCommoditiesError(true); return { data: [] }; }),
+      ]);
+      setStockData(s.data || []);
+      setCommodityData(co.data || []);
+    } catch (e) {
+      console.error('Market data fetch error:', e);
+      setStocksError(true);
+      setCommoditiesError(true);
+    } finally {
+      setStocksLoading(false);
+      setCommoditiesLoading(false);
+    }
   }, [displayLimit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -223,7 +241,22 @@ const Markets = () => {
         </TabsContent>
 
         <TabsContent value="stocks" className="mt-4">
-          {filteredStocks.length > 0 ? (
+          {stocksLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Card key={i} className="glass"><CardContent className="p-4 animate-pulse">
+                  <div className="flex items-start justify-between mb-2"><div className="space-y-1"><div className="h-3 w-12 bg-muted rounded" /><div className="h-2 w-20 bg-muted rounded" /></div><div className="h-4 w-12 bg-muted rounded" /></div>
+                  <div className="h-6 w-24 bg-muted rounded mb-2" /><div className="h-3 w-16 bg-muted rounded" />
+                </CardContent></Card>
+              ))}
+            </div>
+          ) : stocksError && filteredStocks.length === 0 ? (
+            <Card className="glass"><CardContent className="p-16 text-center">
+              <WifiOff className="w-12 h-12 mx-auto mb-4 opacity-40" />
+              <p className="mb-4">Unable to load stock data.</p>
+              <Button size="sm" onClick={() => fetchMarketData()} className="gap-1"><RefreshCw className="w-4 h-4" />Retry</Button>
+            </CardContent></Card>
+          ) : filteredStocks.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {filteredStocks.map((stock, i) => (
                 <Card key={i} className="glass hover-lift cursor-pointer hover:border-primary/50 transition-all" onClick={() => navigate(`/markets/asset/${stock.symbol}?type=stock`)}>
@@ -245,7 +278,22 @@ const Markets = () => {
         </TabsContent>
 
         <TabsContent value="commodities" className="mt-4">
-          {filteredCommodities.length > 0 ? (
+          {commoditiesLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Card key={i} className="glass"><CardContent className="p-4 animate-pulse">
+                  <div className="flex items-start justify-between mb-2"><div className="space-y-1"><div className="h-3 w-16 bg-muted rounded" /><div className="h-2 w-12 bg-muted rounded" /></div><div className="h-4 w-12 bg-muted rounded" /></div>
+                  <div className="h-6 w-20 bg-muted rounded mb-2" /><div className="h-3 w-14 bg-muted rounded" />
+                </CardContent></Card>
+              ))}
+            </div>
+          ) : commoditiesError && filteredCommodities.length === 0 ? (
+            <Card className="glass"><CardContent className="p-16 text-center">
+              <WifiOff className="w-12 h-12 mx-auto mb-4 opacity-40" />
+              <p className="mb-4">Unable to load commodity data.</p>
+              <Button size="sm" onClick={() => fetchMarketData()} className="gap-1"><RefreshCw className="w-4 h-4" />Retry</Button>
+            </CardContent></Card>
+          ) : filteredCommodities.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {filteredCommodities.map((c, i) => (
                 <Card key={i} className="glass hover-lift cursor-pointer hover:border-primary/50 transition-all" onClick={() => navigate(`/markets/asset/${c.symbol}?type=commodity`)}>

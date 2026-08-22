@@ -6,9 +6,11 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 CORS_ORIGINS = "https://tradetrack-pro.pages.dev,https://tradetrackpro.netlify.app,http://localhost:3000"
 
-# Set these via: wrangler secret put <NAME>
-# GEMINI_API_KEY
-# FIREBASE_PROJECT_ID
+# Set via: wrangler secret put FIREBASE_PROJECT_ID
+# Workers AI is free (10K neurons/day) — no API key needed
+
+[ai]
+binding = "AI"
 
 [[d1_databases]]
 binding = "DB"

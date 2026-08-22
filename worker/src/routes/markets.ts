@@ -101,7 +101,7 @@ Based on this LIVE data + sentiment:
 6. **Sentiment Analysis** (from prediction markets if available)
 7. **Final Recommendation** — Buy/Hold/Sell`;
   const system = 'You are a professional cryptocurrency analyst. Use ONLY the live market data provided. Also use Google Search to validate with latest news.';
-  const analysis = await callLlm(c.env.GEMINI_API_KEY, system, prompt, { maxTokens: 4096, timeoutMs: 45000, useSearch: true });
+  const analysis = await callLlm(c.env.AI, system, prompt, { maxTokens: 4096, useSearch: true, geminiKeys: [c.env.GEMINI_API_KEYS, c.env.GEMINI_API_KEY].filter(Boolean).join(",") || undefined });
   return c.json({
     symbol,
     timestamp: new Date().toISOString(),
@@ -136,7 +136,7 @@ Based on this live data and Google Search for latest news:
 5. **Bull Case & Bear Case**
 6. **Recommendation** — Buy/Hold/Sell with targets`;
   const system = 'You are a professional equity analyst focused on Indian and global markets. Use Google Search for latest news and earnings data.';
-  const analysis = await callLlm(c.env.GEMINI_API_KEY, system, prompt, { maxTokens: 4096, timeoutMs: 45000, useSearch: true });
+  const analysis = await callLlm(c.env.AI, system, prompt, { maxTokens: 4096, useSearch: true, geminiKeys: [c.env.GEMINI_API_KEYS, c.env.GEMINI_API_KEY].filter(Boolean).join(",") || undefined });
   return c.json({ symbol, name: stock.name, prediction: analysis });
 });
 
@@ -164,7 +164,7 @@ Based on this live data and Google Search for latest news:
 6. **Impact on Indian markets** (INR, inflation, sectors)
 7. **Recommendation** — Buy/Hold/Sell`;
   const system = 'You are a professional commodity analyst. Use Google Search for latest supply/demand news and geopolitical developments.';
-  const analysis = await callLlm(c.env.GEMINI_API_KEY, system, prompt, { maxTokens: 4096, timeoutMs: 45000, useSearch: true });
+  const analysis = await callLlm(c.env.AI, system, prompt, { maxTokens: 4096, useSearch: true, geminiKeys: [c.env.GEMINI_API_KEYS, c.env.GEMINI_API_KEY].filter(Boolean).join(",") || undefined });
   return c.json({ symbol: commodity.symbol, name: commodity.name, prediction: analysis });
 });
 

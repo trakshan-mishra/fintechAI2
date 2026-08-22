@@ -1,6 +1,9 @@
 export interface Env {
   DB: D1Database;
-  GEMINI_API_KEY: string;
+  AI: Ai;
+  GEMINI_API_KEYS?: string;   // comma-separated keys for general AI
+  GEMINI_SCANNER_KEY?: string; // dedicated key for scanner
+  GEMINI_API_KEY?: string;     // legacy single key (still works)
   FIREBASE_PROJECT_ID: string;
   CORS_ORIGINS: string;
 }
