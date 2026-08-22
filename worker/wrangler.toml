@@ -12,5 +12,5 @@ CORS_ORIGINS = "https://tradetrack-pro.pages.dev,https://tradetrackpro.netlify.a
 
 [[d1_databases]]
 binding = "DB"
-database_name = "tradetrack"
-database_id = "tradetrack-db"
+database_name = "tradetrack-db"
+database_id = "3142f92d-fb1c-497e-9e3c-24f50846a04b"

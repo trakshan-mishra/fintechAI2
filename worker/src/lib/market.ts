@@ -75,41 +75,51 @@ function convertCryptoToInr(data: Coin[], usdInr: number): Coin[] {
   return data;
 }
 
-// Real-time Binance fallback — replaces the old ₹0 mock coins.
-async function getBinanceFallbackCrypto(limit: number): Promise<Coin[]> {
+// Real-time Kraken fallback — works from Cloudflare Worker IPs (Binance blocks them 403).
+const KRAKEN_PAIRS: Record<string, [string, string, string, string]> = {
+  BTC:   ['XXBTZUSD', 'bitcoin', 'Bitcoin', 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png'],
+  ETH:   ['XETHZUSD', 'ethereum', 'Ethereum', 'https://assets.coingecko.com/coins/images/279/large/ethereum.png'],
+  SOL:   ['SOLUSD', 'solana', 'Solana', 'https://assets.coingecko.com/coins/images/4128/large/solana.png'],
+  XRP:   ['XXRPZUSD', 'ripple', 'XRP', 'https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png'],
+  ADA:   ['ADAUSD', 'cardano', 'Cardano', 'https://assets.coingecko.com/coins/images/975/large/cardano.png'],
+  DOT:   ['DOTUSD', 'polkadot', 'Polkadot', 'https://assets.coingecko.com/coins/images/12171/large/polkadot.png'],
+  LTC:   ['XLTCZUSD', 'litecoin', 'Litecoin', 'https://assets.coingecko.com/coins/images/2/large/litecoin.png'],
+  AVAX:  ['AVAXUSD', 'avalanche-2', 'Avalanche', 'https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_Red.png'],
+  LINK:  ['LINKUSD', 'chainlink', 'Chainlink', 'https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png'],
+  MATIC: ['MATICUSD', 'matic-network', 'Polygon', 'https://assets.coingecko.com/coins/images/4713/large/polygon.png'],
+};
+
+async function getKrakenFallbackCrypto(limit: number): Promise<Coin[]> {
   try {
     const usdInr = await getLiveUsdInr();
-    const pairs = BINANCE_FALLBACK.slice(0, Math.min(limit, BINANCE_FALLBACK.length)).map(([s]) => `${s}USDT`);
-    const symbols = encodeURIComponent(JSON.stringify(pairs));
-    const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${symbols}`, {
+    const entries = Object.entries(KRAKEN_PAIRS).slice(0, Math.min(limit, Object.keys(KRAKEN_PAIRS).length));
+    const pairNames = entries.map(([, v]) => v[0]).join(',');
+    const r = await fetch(`https://api.kraken.com/0/public/Ticker?pair=${pairNames}`, {
       signal: AbortSignal.timeout(10000),
     });
-    if (!r.ok) throw new Error(`Binance ${r.status}`);
-    const rows = await r.json() as Array<{
-      symbol: string; lastPrice: string; priceChangePercent: string;
-      highPrice: string; lowPrice: string; volume: string; quoteVolume: string;
-    }>;
-    return rows.map((row): Coin => {
-      const base = row.symbol.replace('USDT', '');
-      const meta = BINANCE_FALLBACK.find(([s]) => s === base);
-      if (!meta) throw new Error(`no meta for ${base}`);
-      const [, cid, name, image] = meta;
-      const priceUsd = parseFloat(row.lastPrice);
+    if (!r.ok) throw new Error(`Kraken ${r.status}`);
+    const data = await r.json() as { result?: Record<string, { c: string[]; p: string[]; l: string[]; h: string[]; v: string[] }> };
+    if (!data.result) return [];
+    return entries.map(([base, meta]): Coin => {
+      const [pair, cid, name, image] = meta;
+      const row = data.result![pair] || data.result![`${pair}USDT`];
+      const priceUsd = row ? parseFloat(row.c[0]) : 0;
+      const prevClose = row ? parseFloat(row.p[1]) : priceUsd;
       return {
         id: cid, symbol: base.toLowerCase(), name, image,
         current_price: round2(priceUsd * usdInr),
         price_usd: priceUsd,
-        market_cap: Math.round(parseFloat(row.quoteVolume) * usdInr),
-        total_volume: Math.round(parseFloat(row.volume) * usdInr),
+        market_cap: Math.round((row ? parseFloat(row.v[1]) : 0) * priceUsd * usdInr),
+        total_volume: Math.round((row ? parseFloat(row.v[0]) : 0) * priceUsd * usdInr),
         market_cap_rank: undefined,
-        price_change_percentage_24h: parseFloat(row.priceChangePercent),
-        high_24h: round2(parseFloat(row.highPrice) * usdInr),
-        low_24h: round2(parseFloat(row.lowPrice) * usdInr),
+        price_change_percentage_24h: prevClose ? (priceUsd - prevClose) / prevClose * 100 : 0,
+        high_24h: round2((row ? parseFloat(row.h[1]) : priceUsd) * usdInr),
+        low_24h: round2((row ? parseFloat(row.l[1]) : priceUsd) * usdInr),
         sparkline_in_7d: { price: [] },
       };
     });
   } catch (e) {
-    console.error('Binance fallback failed', e);
+    console.error('Kraken fallback failed', e);
     return [];
   }
 }
@@ -138,10 +148,10 @@ export async function getCryptoPrices(limit = 20): Promise<Coin[]> {
   } catch (e) {
     console.error('Crypto API error', e);
   }
-  const binance = await getBinanceFallbackCrypto(limit);
-  if (binance.length) {
-    cacheSet(cacheKey, binance, 60);
-    return binance;
+  const kraken = await getKrakenFallbackCrypto(limit);
+  if (kraken.length) {
+    cacheSet(cacheKey, kraken, 60);
+    return kraken;
   }
   return cached ?? [];
 }
