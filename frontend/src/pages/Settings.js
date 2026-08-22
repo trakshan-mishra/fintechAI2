@@ -36,17 +36,9 @@ const Settings = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-4">
-              <img
-                src={user?.picture || 'https://images.pexels.com/photos/7580937/pexels-photo-7580937.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=150&w=150'}
-                alt={user?.name}
-                className="w-20 h-20 rounded-full object-cover"
-                data-testid="profile-picture"
-              />
-              <div className="flex-1">
-                <p className="font-bold text-lg" data-testid="profile-name">{user?.name}</p>
-                <p className="text-sm text-muted-foreground" data-testid="profile-email">{user?.email}</p>
-              </div>
+            <div>
+              <p className="font-bold text-lg" data-testid="profile-name">{user?.name}</p>
+              <p className="text-sm text-muted-foreground" data-testid="profile-email">{user?.email}</p>
             </div>
           </CardContent>
         </Card>

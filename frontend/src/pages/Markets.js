@@ -10,7 +10,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { TrendingUp, TrendingDown, BarChart3, Bitcoin, Zap, Search, RefreshCw, ExternalLink, Sparkles, WifiOff } from 'lucide-react';
+import { TrendingUp, TrendingDown, BarChart3, Bitcoin, Zap, Search, RefreshCw, ExternalLink, Sparkles, WifiOff, Network } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
@@ -156,6 +156,7 @@ const Markets = () => {
           <TabsTrigger value="crypto" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><Bitcoin className="w-4 h-4 mr-1" />Crypto</TabsTrigger>
           <TabsTrigger value="stocks" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><BarChart3 className="w-4 h-4 mr-1" />Indian Stocks</TabsTrigger>
           <TabsTrigger value="commodities" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><Zap className="w-4 h-4 mr-1" />Commodities</TabsTrigger>
+          <TabsTrigger value="insights" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><Network className="w-4 h-4 mr-1" />Insights</TabsTrigger>
         </TabsList>
 
         <TabsContent value="crypto" className="mt-4">
@@ -265,6 +266,10 @@ const Markets = () => {
             <Card className="glass"><CardContent className="p-16 text-center"><Zap className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>Loading...</p></CardContent></Card>
           )}
         </TabsContent>
+
+        <TabsContent value="insights" className="mt-4">
+          <MarketDynamics />
+        </TabsContent>
       </Tabs>
 
       <Card className="glass"><CardContent className="p-3">
@@ -274,9 +279,6 @@ const Markets = () => {
           ))}
         </div>
       </CardContent></Card>
-
-      {/* How markets influence each other — educational reference */}
-      <MarketDynamics />
 
       {/* Stock / Commodity Detail Modal */}
       <Dialog open={!!selectedItem} onOpenChange={() => { setSelectedItem(null); setPrediction(null); }}>
