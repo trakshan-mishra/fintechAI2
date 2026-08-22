@@ -4,9 +4,18 @@ import { getLiveUsdInr } from './fx';
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 const DEFAULT_STOCKS: Record<string, string> = {
+  // US megacaps
   AAPL: 'Apple Inc.', GOOGL: 'Alphabet Inc.', MSFT: 'Microsoft Corp.',
   AMZN: 'Amazon.com Inc.', TSLA: 'Tesla Inc.', NVDA: 'NVIDIA Corp.',
   META: 'Meta Platforms', NFLX: 'Netflix Inc.',
+  AMD: 'AMD', INTC: 'Intel Corp.', ORCL: 'Oracle Corp.',
+  ADBE: 'Adobe Inc.', PYPL: 'PayPal', CRM: 'Salesforce',
+  UBER: 'Uber', SHOP: 'Shopify', SQ: 'Block Inc.',
+  JPM: 'JPMorgan Chase', BAC: 'Bank of America', V: 'Visa', MA: 'Mastercard',
+  WMT: 'Walmart', DIS: 'Disney', KO: 'Coca-Cola', PEP: 'PepsiCo',
+  XOM: 'ExxonMobil', CVX: 'Chevron', PFE: 'Pfizer', JNJ: 'Johnson & Johnson',
+  UNH: 'UnitedHealth', BA: 'Boeing', GS: 'Goldman Sachs',
+  // NSE majors
   'RELIANCE.NS': 'Reliance Industries', 'TCS.NS': 'Tata Consultancy Services',
   'INFY.NS': 'Infosys', 'HDFCBANK.NS': 'HDFC Bank',
   'ICICIBANK.NS': 'ICICI Bank', 'SBIN.NS': 'State Bank of India',
@@ -17,12 +26,37 @@ const DEFAULT_STOCKS: Record<string, string> = {
   'TITAN.NS': 'Titan Company', 'WIPRO.NS': 'Wipro',
   'ONGC.NS': 'Oil & Natural Gas Corp', 'NTPC.NS': 'NTPC Limited',
   'TATAMOTORS.NS': 'Tata Motors', 'SUNPHARMA.NS': 'Sun Pharmaceutical',
+  // NSE expanded
+  'AXISBANK.NS': 'Axis Bank', 'HCLTECH.NS': 'HCL Technologies',
+  'ULTRACEMCO.NS': 'UltraTech Cement', 'NESTLEIND.NS': 'Nestle India',
+  'POWERGRID.NS': 'Power Grid Corp', 'TATASTEEL.NS': 'Tata Steel',
+  'COALINDIA.NS': 'Coal India', 'DRREDDY.NS': 'Dr Reddys Labs',
+  'CIPLA.NS': 'Cipla', 'GRASIM.NS': 'Grasim Industries',
+  'ADANIPORTS.NS': 'Adani Ports', 'EICHERMOT.NS': 'Eicher Motors',
+  'BPCL.NS': 'BPCL', 'BRITANNIA.NS': 'Britannia', 'HEROMOTOCO.NS': 'Hero MotoCorp',
+  'DIVISLAB.NS': 'Divis Labs', 'TATACONSUM.NS': 'Tata Consumer',
+  'BAJAJ-AUTO.NS': 'Bajaj Auto', 'UPL.NS': 'UPL',
+  'SHRIRAMFIN.NS': 'Shriram Finance', 'SBILIFE.NS': 'SBI Life',
+  'HDFCLIFE.NS': 'HDFC Life', 'TECHM.NS': 'Tech Mahindra',
+  'ADANIENT.NS': 'Adani Enterprises', 'ZOMATO.NS': 'Zomato',
+  'DMART.NS': 'Avenue Supermarts', 'PNB.NS': 'Punjab National Bank',
+  'CANBK.NS': 'Canara Bank', 'INDUSINDBK.NS': 'IndusInd Bank',
+  'M&M.NS': 'Mahindra & Mahindra', 'BAJAJFINSV.NS': 'Bajaj Finserv',
+  'PIDILITIND.NS': 'Pidilite Industries', 'DABUR.NS': 'Dabur India',
+  'GODREJCP.NS': 'Godrej Consumer', 'MARICO.NS': 'Marico',
+  'HAVELLS.NS': 'Havells India', 'DLF.NS': 'DLF',
+  'IOC.NS': 'Indian Oil Corp', 'GAIL.NS': 'GAIL India',
+  'MOTHERSON.NS': 'Motherson Sumi', 'BOSCHLTD.NS': 'Bosch',
 };
 
 const DEFAULT_COMMODITIES: Record<string, string> = {
   'GC=F': 'Gold', 'SI=F': 'Silver', 'CL=F': 'Crude Oil (WTI)',
   'BZ=F': 'Crude Oil (Brent)', 'NG=F': 'Natural Gas', 'HG=F': 'Copper',
   'PL=F': 'Platinum', 'PA=F': 'Palladium',
+  'ZW=F': 'Wheat', 'ZC=F': 'Corn', 'ZS=F': 'Soybeans', 'KC=F': 'Coffee',
+  'SB=F': 'Sugar', 'CC=F': 'Cocoa', 'CT=F': 'Cotton',
+  'LE=F': 'Live Cattle', 'GF=F': 'Feeder Cattle',
+  'ZN=F': 'US 10Y Treasury', 'ZB=F': 'US 30Y Treasury',
 };
 
 const PRICE_FIELDS = ['current_price', 'high_24h', 'low_24h', 'ath', 'atl', 'price_change_24h'];

@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
 import Header from '../components/layout/Header';
 import { api } from '../utils/api';
 import { fetchTopCrypto } from '../utils/cryptoData';
+import { useCryptoWebSocket } from '../hooks/useCryptoWebSocket';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { ArrowUp, ArrowDown, Wallet, TrendingUp, Receipt, RefreshCw, WifiOff } from 'lucide-react';
+import { ArrowUp, ArrowDown, Wallet, TrendingUp, Receipt, RefreshCw, WifiOff, Radio } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { motion } from 'framer-motion';
 
@@ -19,6 +20,11 @@ const Dashboard = () => {
   const [cryptoLoading, setCryptoLoading] = useState(true);
   const [cryptoError, setCryptoError] = useState(false);
   const [cryptoUpdated, setCryptoUpdated] = useState(null);
+
+  // Live WebSocket prices for displayed coins
+  const wsSymbols = useMemo(() => cryptoData.slice(0, 5).map(c => c.symbol).filter(Boolean), [cryptoData]);
+  const { prices: livePrices, connected: wsConnected } = useCryptoWebSocket(wsSymbols);
+
 useEffect(() => {
   if (loading) return;
 

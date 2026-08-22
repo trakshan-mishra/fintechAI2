@@ -13,11 +13,12 @@ const DYNAMICS = [
     title: 'USD / INR Exchange Rate',
     icon: '₹',
     color: 'text-blue-500',
-    affects: 'Every USD-priced asset held by an Indian investor — US stocks, crypto, gold, crude oil, international ETFs.',
-    how: 'If you own Bitcoin at $60,000 and USD/INR moves from ₹83 to ₹95, your holding rises from ~₹49.8L to ~₹57L in INR — even if BTC didn\'t move. That\'s a ~14.5% INR gain purely from currency. Strong USD = Indian investors gain on USD-denominated assets; weak USD = the opposite.',
-    trend: 'INR has depreciated over the long term — RBI annual averages were ~₹45.73 (2010) and ~₹74.10 (2020). In 2026, the rupee crossed ₹95/USD (Reuters, Mar 2026) and has traded around ₹95.7. This is not just about inflation differentials — oil prices, capital flows, interest-rate gaps, trade balance, USD strength globally, and RBI intervention all drive it. In 2026, high crude is pressuring INR while RBI intervention limits the decline (Reuters, Aug 2026).',
-    helps: 'Exporters (TCS, Infosys — earn USD, spend INR), NRIs remitting money home, Indian holders of US stocks/crypto/gold priced in USD.',
-    hurts: 'Importers (oil, electronics, machinery), students studying abroad, travellers, anyone paid in INR buying USD goods.',
+    affects: 'Every USD-priced asset held by an Indian investor — US stocks, crypto, gold, and internationally priced commodities.',
+    how: 'If BTC stays at $60,000 while USD/INR rises from ₹83 to ₹95: ₹49.8L → ₹57L. The BTC price hasn\'t changed in USD, but its INR value increases ~14.5%. Your actual INR return is approximately: USD asset return + FX return + interaction effect. TradeTrack separates asset performance from currency performance.',
+    trend: 'RBI data shows ~₹45.73/$ in 2010 and ~₹74.10/$ in 2020. In Aug 2026, USD/INR has been around ₹95.7. The rupee has depreciated substantially over the long run, but with significant year-to-year reversals — it is not a one-directional drift.',
+    why: 'Oil prices & import bill, foreign capital flows (FII/FPI), India–US interest-rate differential, trade/current-account balance, global USD strength, RBI intervention, and global risk sentiment. In 2026: elevated oil + importer dollar demand pressured INR, while RBI intervention + strong FX inflows helped stabilize it (Reuters, Aug 2026).',
+    helps: 'Indian exporters earning USD, IT companies (TCS, Infosys), USD earners, NRIs remitting home, investors holding unhedged USD assets.',
+    hurts: 'Importers, airlines, energy-intensive businesses, overseas education/travel expenses, INR earners buying USD-priced goods.',
     signal: 'USD/INR ↑ + Crude ↑ → India inflation risk ↑ → RBI rate-hold pressure → rate-sensitive stocks (real estate, autos) vulnerable',
   },
   {
@@ -131,6 +132,7 @@ export default function MarketDynamics() {
                   <Row icon={<ArrowRight className="w-3 h-3" />} label="Affects" value={d.affects} />
                   <Row icon={<Network className="w-3 h-3" />} label="How" value={d.how} />
                   <Row icon={<Clock className="w-3 h-3" />} label="Trend" value={d.trend} />
+                  {d.why && <Row icon={<TrendingUp className="w-3 h-3" />} label="Why it moves" value={d.why} />}
                   <Row icon={<Users className="w-3 h-3" />} label="Helps" value={d.helps} valueClass="text-emerald-600 dark:text-emerald-400" />
                   <Row icon={<Users className="w-3 h-3" />} label="Hurts" value={d.hurts} valueClass="text-rose-600 dark:text-rose-400" />
                   <div className="flex gap-3 mt-2 pt-2 border-t border-border">
