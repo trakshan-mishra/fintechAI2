@@ -116,7 +116,7 @@ export default function AIChat() {
           <div>
             <h1 className="text-xl font-bold leading-none">AI Chat</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Powered by Gemini · Live Google Search · {new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+              Live market data · {new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
             </p>
           </div>
         </div>

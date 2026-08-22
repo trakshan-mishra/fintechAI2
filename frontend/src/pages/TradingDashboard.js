@@ -509,7 +509,7 @@ const TradingDashboard = () => {
                     </div>
                   </div>
                   
-                  {/* ATR Card */}
+                  {/* Volatility */}
                   <div className="p-4 rounded-xl bg-muted/30">
                     <p className="font-semibold mb-2">Volatility</p>
                     <div>
@@ -517,18 +517,6 @@ const TradingDashboard = () => {
                       <p className="font-mono text-lg">${analysis.indicators.atr?.toFixed(4)}</p>
                       <p className="text-xs text-muted-foreground mt-1">
                         Avg hourly movement: {(analysis.indicators.atr / analysis.live_data?.price_usd * 100)?.toFixed(2)}%
-                      </p>
-                    </div>
-                  </div>
-                  
-                  {/* ATH Info */}
-                  <div className="p-4 rounded-xl bg-muted/30">
-                    <p className="font-semibold mb-2">All Time High</p>
-                    <div>
-                      <p className="text-muted-foreground text-sm">24H High</p>
-                      <p className="font-mono text-lg">${analysis.live_data?.high_24h_usd?.toFixed(2)}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Distance to high: {((analysis.live_data?.high_24h_usd - analysis.live_data?.price_usd) / analysis.live_data?.price_usd * 100)?.toFixed(1)}%
                       </p>
                     </div>
                   </div>
@@ -668,50 +656,6 @@ const TradingDashboard = () => {
           )}
         </div>
       </div>
-
-      {/* Mathematical Indicators Explanation */}
-      <Card className="glass mt-6">
-        <CardContent className="p-4">
-          <h4 className="font-semibold mb-2 flex items-center gap-2">
-            <Brain className="w-4 h-4 text-primary" />
-            Mathematical Indicators Used
-          </h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-            <div>
-              <span className="text-primary font-mono">RSI(14)</span>
-              <p className="text-muted-foreground text-xs mt-1">RSI = 100 - (100/(1+RS))<br/>RS = Avg Gain / Avg Loss</p>
-            </div>
-            <div>
-              <span className="text-primary font-mono">EMA(50/200)</span>
-              <p className="text-muted-foreground text-xs mt-1">EMA = Price × α + EMA_prev × (1-α)<br/>α = 2/(n+1)</p>
-            </div>
-            <div>
-              <span className="text-primary font-mono">MACD</span>
-              <p className="text-muted-foreground text-xs mt-1">MACD = EMA12 - EMA26<br/>Signal = EMA9 of MACD</p>
-            </div>
-            <div>
-              <span className="text-primary font-mono">Bollinger Bands</span>
-              <p className="text-muted-foreground text-xs mt-1">Upper = SMA20 + 2σ<br/>Lower = SMA20 - 2σ</p>
-            </div>
-            <div>
-              <span className="text-primary font-mono">ATR</span>
-              <p className="text-muted-foreground text-xs mt-1">TR = max(H-L, |H-PC|, |L-PC|)<br/>ATR = EMA(TR, 14)</p>
-            </div>
-            <div>
-              <span className="text-primary font-mono">Fibonacci</span>
-              <p className="text-muted-foreground text-xs mt-1">Level = High - (High-Low) × Ratio<br/>Ratios: 0.236, 0.382, 0.5, 0.618, 0.786</p>
-            </div>
-            <div>
-              <span className="text-primary font-mono">Pivot Points</span>
-              <p className="text-muted-foreground text-xs mt-1">PP = (H+L+C)/3<br/>R1 = 2×PP - L, S1 = 2×PP - H</p>
-            </div>
-            <div>
-              <span className="text-primary font-mono">VWAP</span>
-              <p className="text-muted-foreground text-xs mt-1">VWAP = Σ(TP × Vol) / Σ(Vol)<br/>TP = (H+L+C)/3</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </AppLayout>
   );
 };

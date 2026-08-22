@@ -4,15 +4,17 @@ import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
 import Header from '../components/layout/Header';
 import { api } from '../utils/api';
+import { fetchTopCrypto, searchCrypto as searchCryptoDirect } from '../utils/cryptoData';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { TrendingUp, TrendingDown, BarChart3, Bitcoin, Zap, Search, RefreshCw, ExternalLink, Sparkles } from 'lucide-react';
+import { TrendingUp, TrendingDown, BarChart3, Bitcoin, Zap, Search, RefreshCw, ExternalLink, Sparkles, WifiOff } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
+import MarketDynamics from '../components/MarketDynamics';
 
 const API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -22,6 +24,8 @@ const Markets = () => {
   const [cryptoData, setCryptoData] = useState([]);
   const [stockData, setStockData] = useState([]);
   const [commodityData, setCommodityData] = useState([]);
+  const [cryptoLoading, setCryptoLoading] = useState(true);
+  const [cryptoError, setCryptoError] = useState(false);
   const [activeTab, setActiveTab] = useState('crypto');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -40,18 +44,29 @@ const Markets = () => {
   }, [user, loading, navigate]);
 
   const fetchMarketData = useCallback(async () => {
-    // Load crypto first — it's fastest and the default tab
+    // Crypto: fetch directly from CoinGecko/Binance (browsers aren't rate-limited
+    // like the shared Worker egress IP). Show immediately, never ₹0 mock.
+    setCryptoLoading(true);
+    setCryptoError(false);
     try {
-      const c = await api.getCryptoData(displayLimit);
-      setCryptoData(c.data);
-      setLastUpdated(new Date());
-    } catch { /* non-fatal */ }
-    // Load stocks + commodities in parallel after crypto is shown
+      const c = await fetchTopCrypto(displayLimit);
+      if (c?.length && c[0].current_price > 0) {
+        setCryptoData(c);
+        setLastUpdated(new Date());
+      } else {
+        setCryptoError(true);
+      }
+    } catch {
+      setCryptoError(true);
+    } finally {
+      setCryptoLoading(false);
+    }
+    // Stocks + commodities stay on the Worker (Yahoo Finance — works fine there).
     try {
       const [s, co] = await Promise.all([api.getStockData(), api.getCommodityData()]);
       setStockData(s.data);
       setCommodityData(co.data);
-    } catch { toast.error('Failed to load stock/commodity data'); }
+    } catch { /* non-fatal — keep crypto visible */ }
   }, [displayLimit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -67,17 +82,16 @@ const Markets = () => {
   const t = setTimeout(async () => {
     setIsSearching(true);
     try {
-      let res;
-
       if (activeTab === "crypto") {
-        res = await api.searchCrypto(searchQuery);
-        setSearchResults(res.data.coins || []);
+        // Browser-direct CoinGecko search (reliable, bypasses Worker rate-limit).
+        const { coins } = await searchCryptoDirect(searchQuery);
+        setSearchResults(coins || []);
       } else if (activeTab === "stocks") {
-        res = await api.searchStocks(searchQuery);
+        const res = await api.searchStocks(searchQuery);
         const data = await res.json();
         setSearchResults([data]);
       } else if (activeTab === "commodities") {
-        res = await api.searchCommodities(searchQuery);
+        const res = await api.searchCommodities(searchQuery);
         const data = await res.json();
         setSearchResults([data]);
       }
@@ -145,7 +159,27 @@ const Markets = () => {
         </TabsList>
 
         <TabsContent value="crypto" className="mt-4">
-          {displayedCrypto.length > 0 ? (
+          {cryptoLoading && displayedCrypto.length === 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Card key={i} className="glass"><CardContent className="p-4 animate-pulse">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2"><div className="w-8 h-8 rounded-full bg-muted" /><div className="space-y-1"><div className="h-3 w-10 bg-muted rounded" /><div className="h-2 w-16 bg-muted rounded" /></div></div>
+                    <div className="h-4 w-12 bg-muted rounded" />
+                  </div>
+                  <div className="h-5 w-24 bg-muted rounded mb-2" />
+                  <div className="h-3 w-16 bg-muted rounded mb-3" />
+                  <div className="h-10 w-full bg-muted rounded" />
+                </CardContent></Card>
+              ))}
+            </div>
+          ) : cryptoError && displayedCrypto.length === 0 ? (
+            <Card className="glass"><CardContent className="p-16 text-center">
+              <WifiOff className="w-12 h-12 mx-auto mb-4 opacity-40" />
+              <p className="mb-4">Live crypto data temporarily unavailable.</p>
+              <Button size="sm" onClick={() => fetchMarketData()} className="gap-1"><RefreshCw className="w-4 h-4" />Retry</Button>
+            </CardContent></Card>
+          ) : displayedCrypto.length > 0 ? (
             <>
               {searchQuery && <p className="text-sm text-muted-foreground mb-3">Live results for "{searchQuery}"</p>}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -167,7 +201,6 @@ const Markets = () => {
                           <p className="text-xl font-mono font-bold mb-1">₹{coin.current_price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
                         ) : <p className="text-xs text-muted-foreground mb-2">Loading...</p>}
                         {coin.price_usd != null && <p className="text-xs text-muted-foreground">${coin.price_usd.toLocaleString('en-US', { maximumFractionDigits: 4 })} USD</p>}
-                        <p className="text-xs text-muted-foreground mb-2">MCap: ₹{((coin.market_cap || 0) / 1e9).toFixed(1)}B</p>
                         {spark.length > 0 && <ResponsiveContainer width="100%" height={40}><LineChart data={spark}><Line type="monotone" dataKey="value" stroke={isUp ? '#10b981' : '#ef4444'} strokeWidth={1.5} dot={false} /></LineChart></ResponsiveContainer>}
                         <p className="text-xs text-muted-foreground text-center mt-2 flex items-center justify-center gap-1"><ExternalLink className="w-3 h-3" />Full chart</p>
                       </CardContent>
@@ -177,7 +210,7 @@ const Markets = () => {
               </div>
               {!searchQuery && cryptoData.length >= displayLimit && (
                 <div className="mt-4 text-center">
-                  <Button onClick={async () => { setLoadingMore(true); try { const r = await api.getCryptoData(displayLimit+20); setCryptoData(r.data); setDisplayLimit(d=>d+20); } finally { setLoadingMore(false); } }} disabled={loadingMore}>
+                  <Button onClick={async () => { setLoadingMore(true); try { const r = await fetchTopCrypto(displayLimit + 20); setCryptoData(r); setDisplayLimit(d => d + 20); } finally { setLoadingMore(false); } }} disabled={loadingMore}>
                     {loadingMore ? 'Loading...' : 'Load More'}
                   </Button>
                 </div>
@@ -235,12 +268,15 @@ const Markets = () => {
       </Tabs>
 
       <Card className="glass"><CardContent className="p-3">
-        <div className="grid grid-coX`Zls-2 md:grid-cols-4 gap-3 text-xs">
-          {[['Sources','CoinMarketCap • CoinGecko • Yahoo Finance'],['Updates','Every 60 seconds'],['Currency','Indian Rupee (₹)'],['AI','Gemini 2.0 Flash']].map(([k,v])=>(
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+          {[['Sources','CoinGecko • Binance • Yahoo Finance'],['Updates','Every 60 seconds'],['Currency','Indian Rupee (₹)']].map(([k,v])=>(
             <div key={k}><p className="text-muted-foreground">{k}</p><p className="font-medium">{v}</p></div>
           ))}
         </div>
       </CardContent></Card>
+
+      {/* How markets influence each other — educational reference */}
+      <MarketDynamics />
 
       {/* Stock / Commodity Detail Modal */}
       <Dialog open={!!selectedItem} onOpenChange={() => { setSelectedItem(null); setPrediction(null); }}>

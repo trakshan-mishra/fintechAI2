@@ -98,7 +98,7 @@ async function callGeminiVision(imageSrcs, userQuestion = null) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `Gemini API error ${res.status}`);
+    throw new Error(err?.error?.message || `Scan failed (${res.status})`);
   }
 
   const data = await res.json();
@@ -496,7 +496,7 @@ const Scanner = () => {
                   <FileText className="drop-zone-icon" />
                   <h2>Scan Your Receipts</h2>
                   <p>
-                    Powered by Gemini Vision — supports printed &amp; <strong>handwritten</strong> text.<br/>
+                    AI receipt scanner — supports printed &amp; <strong>handwritten</strong> text.<br/>
                     Drag &amp; drop, upload multiple files, or use your camera.
                   </p>
                   <div className="dz-btns" onClick={e => e.stopPropagation()}>
@@ -622,7 +622,7 @@ const Scanner = () => {
                 <Button onClick={analyzeAll} disabled={analyzing} data-testid="analyze-button">
                   {analyzing
                     ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Analyzing…</>
-                    : <><Sparkles className="w-4 h-4 mr-2" /> Analyze with Gemini</>
+                    : <><Sparkles className="w-4 h-4 mr-2" /> Analyze</>
                   }
                 </Button>
               </div>

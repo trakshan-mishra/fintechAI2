@@ -8,7 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
-import os, logging, uuid, httpx, asyncio, base64, io, csv, json, re
+import os, logging, uuid, httpx, asyncio, base64, io, csv, json, re, urllib.parse
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -240,19 +240,58 @@ async def call_llm(system: str, prompt: str, max_tokens: int = 4096, timeout: fl
         logger.error(f"LLM call failed: {e}")
         return "AI analysis temporarily unavailable."
 
-# ─── Mock Crypto Data (Fallback) ─────────────────────────────────────────────
+# ─── Crypto Fallback (Binance real-time) ──────────────────────────────────────
+# Real fallback instead of ₹0 mock — CoinGecko gets rate-limited on shared IPs.
 
-def get_mock_crypto_data():
-    return [
-        {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin", "current_price": 0, "market_cap": 0,
-         "price_change_percentage_24h": 0, "total_volume": 0, "market_cap_rank": 1,
-         "image": "https://assets.coingecko.com/coins/images/1/large/bitcoin.png",
-         "sparkline_in_7d": {"price": []}},
-        {"id": "ethereum", "symbol": "eth", "name": "Ethereum", "current_price": 0, "market_cap": 0,
-         "price_change_percentage_24h": 0, "total_volume": 0, "market_cap_rank": 2,
-         "image": "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
-         "sparkline_in_7d": {"price": []}},
-    ]
+_BINANCE_FALLBACK = [
+    ("BTC", "bitcoin", "Bitcoin", "https://assets.coingecko.com/coins/images/1/large/bitcoin.png"),
+    ("ETH", "ethereum", "Ethereum", "https://assets.coingecko.com/coins/images/279/large/ethereum.png"),
+    ("BNB", "binancecoin", "BNB", "https://assets.coingecko.com/coins/images/825/large/bnb-icon.png"),
+    ("SOL", "solana", "Solana", "https://assets.coingecko.com/coins/images/4128/large/solana.png"),
+    ("XRP", "ripple", "XRP", "https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png"),
+    ("DOGE", "dogecoin", "Dogecoin", "https://assets.coingecko.com/coins/images/5/large/dogecoin.png"),
+    ("ADA", "cardano", "Cardano", "https://assets.coingecko.com/coins/images/975/large/cardano.png"),
+    ("AVAX", "avalanche-2", "Avalanche", "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_Red.png"),
+    ("TRX", "tron", "TRON", "https://assets.coingecko.com/coins/images/1094/large/tron-logo.png"),
+    ("LINK", "chainlink", "Chainlink", "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png"),
+    ("DOT", "polkadot", "Polkadot", "https://assets.coingecko.com/coins/images/12171/large/polkadot.png"),
+    ("MATIC", "matic-network", "Polygon", "https://assets.coingecko.com/coins/images/4713/large/polygon.png"),
+]
+
+async def get_binance_fallback_crypto(limit: int = 12) -> list:
+    """Real-time top coins from Binance 24hr ticker, converted to INR."""
+    try:
+        usd_inr = await get_live_usd_inr()
+        pairs = [f"{s}USDT" for s, _, _, _ in _BINANCE_FALLBACK[:limit]]
+        symbols = urllib.parse.quote(json.dumps(pairs))
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(f"https://api.binance.com/api/v3/ticker/24hr?symbols={symbols}")
+            r.raise_for_status()
+            rows = r.json()
+        out = []
+        for row in rows:
+            base = row["symbol"].replace("USDT", "")
+            meta = next((m for m in _BINANCE_FALLBACK if m[0] == base), None)
+            if not meta:
+                continue
+            _, cid, name, image = meta
+            price_usd = float(row["lastPrice"])
+            out.append({
+                "id": cid, "symbol": base.lower(), "name": name,
+                "image": image,
+                "current_price": round(price_usd * usd_inr, 2),
+                "price_usd": price_usd,
+                "market_cap": round(float(row["quoteVolume"]) * usd_inr, 0),
+                "total_volume": round(float(row["volume"]) * usd_inr, 0),
+                "price_change_percentage_24h": float(row["priceChangePercent"]),
+                "high_24h": round(float(row["highPrice"]) * usd_inr, 2),
+                "low_24h": round(float(row["lowPrice"]) * usd_inr, 2),
+                "sparkline_in_7d": {"price": []},
+            })
+        return out
+    except Exception as e:
+        logger.warning(f"Binance fallback failed: {e}")
+        return []
 
 # ─── Trading Indicators ───────────────────────────────────────────────────────
 
@@ -489,11 +528,18 @@ async def get_crypto_prices(limit: int = 20):
                 headers={"Accept": "application/json", "User-Agent": "GlobalMarketPulse/1.0"})
             if resp.status_code == 200:
                 data = _convert_crypto_to_inr(resp.json(), usd_inr)
-                cache_set(cache_key, data, ttl_seconds=120)
-                return data
+                # Reject all-zero (rate-limited) payloads — fall through to Binance.
+                if data and (data[0].get("current_price") or 0) > 0:
+                    cache_set(cache_key, data, ttl_seconds=120)
+                    return data
     except Exception as e:
         logger.error(f"Crypto API error: {e}")
-    return cached or get_mock_crypto_data()
+    # Real-time Binance fallback (never ₹0 mock).
+    binance = await get_binance_fallback_crypto(limit)
+    if binance:
+        cache_set(cache_key, binance, ttl_seconds=60)
+        return binance
+    return cached or []
 
 @api_router.get("/markets/crypto/search")
 async def search_crypto(query: str):
