@@ -187,7 +187,7 @@ interface StockRow {
   currency: string;
 }
 
-async function fetchSingle(sym: string, name: string): Promise<StockRow | null> {
+async function fetchSingle(sym: string, name: string, usdInr: number): Promise<StockRow | null> {
   try {
     const r = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}`,
@@ -202,14 +202,18 @@ async function fetchSingle(sym: string, name: string): Promise<StockRow | null> 
     const prev = (meta.previousClose || meta.chartPreviousClose || 1) as number;
     if (price == null) return null;
     const clean = sym.replace('.NS', '').replace('.BO', '');
+    const currency = (meta.currency as string) ?? 'USD';
+    const isIndianStock = sym.endsWith('.NS') || sym.endsWith('.BO');
+    const mult = isIndianStock ? 1 : usdInr;
     return {
       symbol: clean, name,
-      price: round2(price), change: round2(price - prev),
+      price: round2(price * mult),
+      change: round2((price - prev) * mult),
       change_percent: round2((price - prev) / prev * 100),
-      high: round2(meta.regularMarketDayHigh as number ?? price),
-      low: round2(meta.regularMarketDayLow as number ?? price),
+      high: round2((meta.regularMarketDayHigh as number ?? price) * mult),
+      low: round2((meta.regularMarketDayLow as number ?? price) * mult),
       volume: meta.regularMarketVolume as number ?? 0,
-      currency: (meta.currency as string) ?? 'USD',
+      currency: 'INR',
     };
   } catch (e) {
     console.warn(`Yahoo chart fetch failed for ${sym}`, e);
@@ -219,8 +223,9 @@ async function fetchSingle(sym: string, name: string): Promise<StockRow | null> 
 
 async function fetchMarketData(symbols: string[], names: Record<string, string> = {}): Promise<StockRow[]> {
   if (!symbols.length) return [];
+  const usdInr = await getLiveUsdInr();
   const order = new Map(symbols.map((s, i) => [s.replace('.NS', '').replace('.BO', ''), i]));
-  const settled = await Promise.all(symbols.map((s) => fetchSingle(s, names[s] || s)));
+  const settled = await Promise.all(symbols.map((s) => fetchSingle(s, names[s] || s, usdInr)));
   const results = settled.filter((r): r is StockRow => r !== null);
   results.sort((a, b) => (order.get(a.symbol) ?? 999) - (order.get(b.symbol) ?? 999));
   return results;
