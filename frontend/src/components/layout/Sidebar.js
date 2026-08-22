@@ -4,14 +4,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import { 
   LayoutDashboard, Receipt, Scan, FileText, Calculator, 
   TrendingUp, Brain, Settings, LogOut, Sparkles, 
-  BarChart3, Menu, Compass
+  BarChart3, Compass, X
 } from 'lucide-react';
 
-const Sidebar = () => {
+const Sidebar = ({ open, onClose }) => {
   const location = useLocation();
   const { user, logout } = useAuth();
-
-  const [open, setOpen] = useState(false);
 
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -29,81 +27,53 @@ const Sidebar = () => {
 
   return (
     <>
-      {/* 🔥 MOBILE TOGGLE BUTTON */}
-      <button
-        onClick={() => setOpen(true)}
-        className="md:hidden fixed top-3 left-3 z-50 bg-primary text-white p-2 rounded-lg shadow-lg active:scale-95 transition-transform"
-      >
-        <Menu className="w-5 h-5" />
-      </button>
-
-      {/* 🔥 BACKDROP OVERLAY */}
+      {/* Backdrop */}
       <div
-        onClick={() => setOpen(false)}
-        className={`
-          fixed inset-0 bg-black/40 backdrop-blur-sm z-40 transition-opacity duration-300
-          ${open ? 'opacity-100 visible' : 'opacity-0 invisible'}
-          md:hidden
-        `}
+        onClick={onClose}
+        className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-40 transition-opacity duration-300 md:hidden ${
+          open ? 'opacity-100 visible' : 'opacity-0 invisible'
+        }`}
       />
 
-      {/* 🔥 SIDEBAR (UNCHANGED UI + ADDED EFFECTS) */}
+      {/* Sidebar */}
       <aside
-        className={`
-          fixed left-0 top-0 h-screen w-64 
-          bg-background/95 backdrop-blur-xl 
-          border-r border-border/50 z-50
-
-          transform transition-transform duration-300 ease-in-out
-
-          ${open ? 'translate-x-0' : '-translate-x-full'}
-          md:translate-x-0
-        `}
+        className={`fixed left-0 top-0 h-screen w-64 bg-background/95 backdrop-blur-xl border-r border-border/50 z-50 transform transition-transform duration-300 ease-in-out md:translate-x-0 ${
+          open ? 'translate-x-0' : '-translate-x-full'
+        }`}
       >
         <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="p-6 border-b border-border/50">
+          {/* Logo + Close */}
+          <div className="p-5 border-b border-border/50 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg bg-gradient-to-r from-primary to-primary/70 flex items-center justify-center">
                 <TrendingUp className="w-5 h-5 text-white" />
               </div>
-              <span className="font-bold text-xl">
-                TradeTrack<span className="text-primary">Pro</span>
-              </span>
+              <span className="font-bold text-xl">TradeTrack<span className="text-primary">Pro</span></span>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Professional Trading Platform
-            </p>
+            <button onClick={onClose} className="md:hidden p-1.5 rounded-lg hover:bg-accent transition-colors">
+              <X className="w-5 h-5 text-muted-foreground" />
+            </button>
           </div>
 
           {/* Navigation */}
           <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path;
+              const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
 
               return (
                 <NavLink
                   key={item.path}
                   to={item.path}
-                  onClick={() => setOpen(false)} // 🔥 auto close on mobile
-                  className={`
-                    flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium 
-                    transition-all duration-200
-
-                    ${isActive 
-                      ? 'bg-primary text-primary-foreground shadow-lg' 
-                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-                    }
-                  `}
+                  onClick={onClose}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    isActive ? 'bg-primary text-primary-foreground shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+                  }`}
                 >
                   <Icon className="w-4 h-4" />
                   <span className="flex-1">{item.label}</span>
-
                   {item.highlight && !isActive && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">
-                      AI
-                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">AI</span>
                   )}
                 </NavLink>
               );
@@ -115,27 +85,15 @@ const Sidebar = () => {
             <div className="p-4 border-t border-border/50">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-9 h-9 rounded-full bg-gradient-to-r from-primary/20 to-primary/10 flex items-center justify-center">
-                  <span className="text-primary font-semibold text-sm">
-                    {user.email?.[0]?.toUpperCase() || 'U'}
-                  </span>
+                  <span className="text-primary font-semibold text-sm">{user.email?.[0]?.toUpperCase() || 'U'}</span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">
-                    {user.name || user.email?.split('@')[0]}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {user.email}
-                  </p>
+                  <p className="text-sm font-medium truncate">{user.name || user.email?.split('@')[0]}</p>
+                  <p className="text-xs text-muted-foreground truncate">{user.email}</p>
                 </div>
               </div>
-
-              <button
-                onClick={logout}
-                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm 
-                text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
-              >
-                <LogOut className="w-4 h-4" />
-                <span>Sign Out</span>
+              <button onClick={logout} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors">
+                <LogOut className="w-4 h-4" /><span>Sign Out</span>
               </button>
             </div>
           )}

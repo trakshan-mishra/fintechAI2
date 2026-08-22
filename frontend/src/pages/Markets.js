@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
-import Header from '../components/layout/Header';
 import { api } from '../utils/api';
 import { fetchTopCrypto, searchCrypto as searchCryptoDirect } from '../utils/cryptoData';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -150,8 +149,7 @@ const Markets = () => {
   );
 
   return (
-    <AppLayout>
-      <Header title="Markets" />
+    <AppLayout title="Markets">
       <div className="mb-6 flex gap-3 items-center flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

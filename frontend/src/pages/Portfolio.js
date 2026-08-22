@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
-import Header from '../components/layout/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -159,8 +158,7 @@ const Portfolio = () => {
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" /></div>;
 
   return (
-    <AppLayout>
-      <Header title="My Portfolio" />
+    <AppLayout title="My Portfolio">
 
       {/* Top stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
-import Header from '../components/layout/Header';
 import { api } from '../utils/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Calculator, TrendingUp, TrendingDown, FileText, AlertCircle } from 'lucide-react';
@@ -82,8 +81,7 @@ const TaxSummary = () => {
   ];
 
   return (
-    <AppLayout>
-      <Header title="Tax Summary" />
+    <AppLayout title="Tax Summary">
 
       <div className="mb-8">
         <Card className="glass-strong border-l-4 border-l-orange-500" data-testid="tax-info-banner">

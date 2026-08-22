@@ -2,7 +2,6 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
-import Header from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import {
@@ -300,8 +299,7 @@ const Scanner = () => {
   const currentImage = images[activeIdx] || null;
 
   return (
-    <AppLayout>
-      <Header title="Receipt Scanner" />
+    <AppLayout title="Receipt Scanner">
 
       <style>{`
         /* ── Layout ── */

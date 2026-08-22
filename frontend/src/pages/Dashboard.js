@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
-import Header from '../components/layout/Header';
 import { api } from '../utils/api';
 import { fetchTopCrypto } from '../utils/cryptoData';
 import { useCryptoWebSocket } from '../hooks/useCryptoWebSocket';
@@ -124,8 +123,7 @@ const fetchDashboardData = async () => {
   const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316'];
 
   return (
-    <AppLayout>
-      <Header title="Dashboard" />
+    <AppLayout title="Dashboard">
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">

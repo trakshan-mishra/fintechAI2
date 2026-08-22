@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
-import Header from '../components/layout/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -711,8 +710,7 @@ const Discover = () => {
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" /></div>;
 
   return (
-    <AppLayout>
-      <Header title="Discover" />
+    <AppLayout title="Discover">
       <div className="mb-6">
         <p className="text-muted-foreground">Investment Intelligence Center — SIP planning, live returns, market scanner, trending, and IPOs.</p>
       </div>
