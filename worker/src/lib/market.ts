@@ -182,9 +182,9 @@ export async function searchCrypto(query: string): Promise<{ coins: Coin[] }> {
 }
 
 interface StockRow {
-  symbol: string; name: string; price: number; change: number;
-  change_percent: number; high: number; low: number; volume: number;
-  currency: string;
+  symbol: string; name: string; price: number; price_usd: number | null;
+  change: number; change_percent: number; high: number; low: number;
+  volume: number; currency: string;
 }
 
 async function fetchSingle(sym: string, name: string, usdInr: number): Promise<StockRow | null> {
@@ -208,6 +208,7 @@ async function fetchSingle(sym: string, name: string, usdInr: number): Promise<S
     return {
       symbol: clean, name,
       price: round2(price * mult),
+      price_usd: isIndianStock ? null : round2(price),
       change: round2((price - prev) * mult),
       change_percent: round2((price - prev) / prev * 100),
       high: round2((meta.regularMarketDayHigh as number ?? price) * mult),

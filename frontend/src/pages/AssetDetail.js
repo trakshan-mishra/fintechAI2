@@ -38,11 +38,6 @@ if (!container) return;
       hide_top_toolbar: false,
       hide_legend: false,
       save_image: false,
-      studies: [
-        'RSI@tv-basicstudies',
-        'MACD@tv-basicstudies',
-        'BB@tv-basicstudies'
-      ],
       support_host: 'https://www.tradingview.com'
     });
 

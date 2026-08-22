@@ -73,6 +73,15 @@ const COMMODITY_TV_MAP = {
   COPPER:     'TVC:COPPER',
   WHEAT:      'CBOT:ZW1!',
   CORN:       'CBOT:ZC1!',
+  // Yahoo Finance symbols → TradingView
+  'GC=F':     'TVC:GOLD',
+  'SI=F':     'TVC:SILVER',
+  'CL=F':     'TVC:USOIL',
+  'BZ=F':     'TVC:BRENT',
+  'NG=F':     'TVC:NATGAS',
+  'HG=F':     'TVC:COPPER',
+  'PL=F':     'TVC:PLATINUM',
+  'PA=F':     'TVC:PALLADIUM',
 };
 
 /**

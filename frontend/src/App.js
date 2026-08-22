@@ -14,6 +14,7 @@ import Scanner from './pages/Scanner';
 import Invoices from './pages/Invoices';
 import TaxSummary from './pages/TaxSummary';
 import Markets from './pages/Markets';
+import Discover from './pages/Discover';
 import CoinDetail from './pages/CoinDetail';
 import AssetDetail from './pages/AssetDetail';
 import Portfolio from './pages/Portfolio';
@@ -45,6 +46,7 @@ function App() {
               <Route path="/invoices" element={<Invoices />} />
               <Route path="/tax" element={<TaxSummary />} />
               <Route path="/markets" element={<Markets />} />
+              <Route path="/discover" element={<Discover />} />
               <Route path="/markets/coin/:coinId" element={<CoinDetail />} />
               <Route path="/markets/asset/:symbol" element={<AssetDetail />} />
               <Route path="/portfolio" element={<Portfolio />} />

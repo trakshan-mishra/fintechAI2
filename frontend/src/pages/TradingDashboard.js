@@ -52,15 +52,13 @@ const TradingDashboard = () => {
     setAnalysis(null);
     try {
       const token = await getAuthToken();
-      if (!token) {
-        toast.error('Please login again');
-        navigate('/sign-in');
-        return;
-      }
+
+      const headers = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
 
       const response = await fetch(
         `${API_BASE}/markets/crypto/predict/${symbol.trim().toUpperCase()}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers }
       );
 
       if (response.status === 401) {
@@ -70,7 +68,7 @@ const TradingDashboard = () => {
       }
 
       if (response.status === 502) {
-        toast.error(`Symbol "${symbol.toUpperCase()}" not found on Binance. Try BTC, ETH, SOL`);
+        toast.error(`Could not fetch live data for "${symbol.toUpperCase()}". Try BTC, ETH, SOL`);
         return;
       }
 

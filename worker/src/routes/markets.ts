@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../env';
-import { getCryptoPrices, searchCrypto, getStocks, getCommodities, searchYfinanceGlobal } from '../lib/market';
+import { getCryptoPrices, searchCrypto, getStocks, getCommodities, searchYfinanceGlobal, getStocks as getStockList, getCommodities as getCommodityList } from '../lib/market';
 import { getPolymarketSentiment } from '../lib/polymarket';
 import { fetchLiveCryptoPrice } from '../lib/binance';
 import { callLlm } from '../lib/gemini';
+import { getLiveUsdInr } from '../lib/fx';
 
 const marketRoutes = new Hono<AppEnv>();
 
@@ -108,6 +109,63 @@ Based on this LIVE data + sentiment:
     prediction: analysis,
     polymarket: polyData,
   });
+});
+
+// ── Stock prediction ──────────────────────────────────────────────────────────
+marketRoutes.get('/stocks/predict/:symbol', async (c) => {
+  const symbol = c.req.param('symbol').toUpperCase();
+  const stocks = await getStocks();
+  const stock = stocks.find((s) => s.symbol === symbol);
+  if (!stock) return c.json({ detail: `Stock ${symbol} not found` }, 404);
+  const usdInr = await getLiveUsdInr();
+  const today = new Date().toUTCString();
+  const prompt = `LIVE DATA — ${stock.name} (${symbol}) — ${today}
+
+PRICE (INR):
+  Current: ₹${stock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+  Change: ${stock.change >= 0 ? '+' : ''}₹${Math.abs(stock.change).toFixed(2)} (${stock.change_percent >= 0 ? '+' : ''}${stock.change_percent}%)
+  Day High: ₹${stock.high.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+  Day Low: ₹${stock.low.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+  Volume: ${stock.volume.toLocaleString('en-IN')}
+
+Based on this live data and Google Search for latest news:
+1. **Current Price Analysis**
+2. **Key Support & Resistance levels**
+3. **Short-term Outlook** (1-2 weeks)
+4. **Fundamental Analysis** (earnings, sector, competition)
+5. **Bull Case & Bear Case**
+6. **Recommendation** — Buy/Hold/Sell with targets`;
+  const system = 'You are a professional equity analyst focused on Indian and global markets. Use Google Search for latest news and earnings data.';
+  const analysis = await callLlm(c.env.GEMINI_API_KEY, system, prompt, { maxTokens: 4096, timeoutMs: 45000, useSearch: true });
+  return c.json({ symbol, name: stock.name, prediction: analysis });
+});
+
+// ── Commodity prediction ─────────────────────────────────────────────────────
+marketRoutes.get('/commodities/predict/:symbol', async (c) => {
+  const symbol = c.req.param('symbol').toUpperCase();
+  const commodities = await getCommodities();
+  const commodity = commodities.find((c) => c.symbol === symbol || c.name.toUpperCase() === symbol);
+  if (!commodity) return c.json({ detail: `Commodity ${symbol} not found` }, 404);
+  const today = new Date().toUTCString();
+  const prompt = `LIVE DATA — ${commodity.name} (${commodity.symbol}) — ${today}
+
+PRICE (INR):
+  Current: ₹${commodity.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+  Change: ${commodity.change >= 0 ? '+' : ''}₹${Math.abs(commodity.change).toFixed(2)} (${commodity.change_percent >= 0 ? '+' : ''}${commodity.change_percent}%)
+  Day High: ₹${commodity.high.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+  Day Low: ₹${commodity.low.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+
+Based on this live data and Google Search for latest news:
+1. **Current Price Analysis**
+2. **Key Support & Resistance levels**
+3. **Short-term Outlook** (1-2 weeks)
+4. **Supply/Demand Factors**
+5. **Geopolitical Impact**
+6. **Impact on Indian markets** (INR, inflation, sectors)
+7. **Recommendation** — Buy/Hold/Sell`;
+  const system = 'You are a professional commodity analyst. Use Google Search for latest supply/demand news and geopolitical developments.';
+  const analysis = await callLlm(c.env.GEMINI_API_KEY, system, prompt, { maxTokens: 4096, timeoutMs: 45000, useSearch: true });
+  return c.json({ symbol: commodity.symbol, name: commodity.name, prediction: analysis });
 });
 
 export default marketRoutes;

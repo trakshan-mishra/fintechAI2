@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
-import { getTVSymbol, getBinancePrice } from "../utils/binance";
+import { getTVSymbol } from "../utils/binance";
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { ArrowLeft, TrendingUp, TrendingDown, Sparkles, Globe, RefreshCw, BarChart3, Activity, ExternalLink } from 'lucide-react';
@@ -49,11 +49,6 @@ if (!container) return;
             hide_top_toolbar: false,
             hide_legend: false,
             save_image: false,
-            studies: [
-                'RSI@tv-basicstudies',
-                'MACD@tv-basicstudies',
-                'BB@tv-basicstudies'
-            ],
             support_host: 'https://www.tradingview.com'
         });
 
@@ -150,7 +145,6 @@ const CoinDetail = () => {
     const { user, loading, getAuthToken } = useAuth();
     const [coin, setCoin] = useState(null);
     const [loadingCoin, setLoadingCoin] = useState(true);
-    const [liveData, setLiveData] = useState(null);
     const [prediction, setPrediction] = useState(null);
     const [loadingPrediction, setLoadingPrediction] = useState(false);
     const [activeTab, setActiveTab] = useState('chart');
@@ -174,11 +168,6 @@ const CoinDetail = () => {
     }, [coinId]);
 
     useEffect(() => { if (user) fetchCoin(); }, [user, fetchCoin]);
-    useEffect(() => {
-        if (!coin?.symbol) return;
-
-        getBinancePrice(coin.symbol).then(setLiveData);
-    }, [coin]);
     const fetchPrediction = async () => {
         if (loadingPrediction) return;
         setLoadingPrediction(true);
@@ -234,9 +223,7 @@ const CoinDetail = () => {
                             </div>
                             <div className="flex items-baseline gap-3 flex-wrap">
                                 <span className="text-2xl font-mono font-bold">
-                                    ₹{liveData?.lastPrice
-                                        ? Number(liveData.lastPrice).toLocaleString('en-IN')
-                                        : price.toLocaleString('en-IN')}
+                                    ₹{price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                                 </span>
                                 <span className={`flex items-center gap-1 text-lg font-semibold ${isUp ? 'text-emerald-500' : 'text-rose-500'}`}>
                                     {isUp ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}

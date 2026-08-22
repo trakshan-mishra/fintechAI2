@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { 
   LayoutDashboard, Receipt, Scan, FileText, Calculator, 
   TrendingUp, Brain, Settings, LogOut, Sparkles, 
-  BarChart3, Menu
+  BarChart3, Menu, Compass
 } from 'lucide-react';
 
 const Sidebar = () => {
@@ -15,7 +15,8 @@ const Sidebar = () => {
 
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { path: '/trading', label: 'Trading Dashboard', icon: Sparkles, highlight: true },
+    { path: '/discover', label: 'Discover', icon: Compass, highlight: true },
+    { path: '/trading', label: 'Trading Dashboard', icon: Sparkles },
     { path: '/transactions', label: 'Transactions', icon: Receipt },
     { path: '/scanner', label: 'Scanner', icon: Scan },
     { path: '/invoices', label: 'Invoices', icon: FileText },

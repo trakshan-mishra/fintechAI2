@@ -1,16 +1,33 @@
 import { ema, rsi, macd, bollingerBands, atr, fibonacciRetracement, pivotPoints } from './indicators';
 import { getLiveUsdInr } from './fx';
 
-export async function getBinanceKlines(symbol = 'BTCUSDT', interval = '1h', limit = 250) {
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+// Kraken pair mapping (Binance blocks CF Worker IPs with 403).
+const KRAKEN_PAIRS: Record<string, string> = {
+  BTC: 'XXBTZUSD', ETH: 'XETHZUSD', SOL: 'SOLUSD', XRP: 'XXRPZUSD',
+  ADA: 'ADAUSD', DOT: 'DOTUSD', LTC: 'XLTCZUSD', AVAX: 'AVAXUSD',
+  LINK: 'LINKUSD', MATIC: 'MATICUSD', BCH: 'BCHUSD', XLM: 'XXLMZUSD',
+  ATOM: 'ATOMUSD', TRX: 'TRXUSD', UNI: 'UNIUSD', NEAR: 'NEARUSD',
+  APT: 'APTUSD', ARB: 'ARBUSD', SUI: 'SUIUSD', PEPE: 'PEPEUSD',
+  ETC: 'XETCZUSD', FTT: 'FTTUSD', ICP: 'ICPUSD', FIL: 'FILUSD',
+};
+
+// Kraken OHLC interval: 60 = 1h
+export async function getKrakenKlines(symbol: string, interval = 60, limit = 720) {
+  const pair = KRAKEN_PAIRS[symbol.toUpperCase()] || `${symbol.toUpperCase()}USD`;
+  const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${interval}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) throw new Error(`Binance klines ${res.status}`);
-  const data = await res.json() as unknown[][];
+  if (!res.ok) throw new Error(`Kraken OHLC ${res.status}`);
+  const data = await res.json() as { error: unknown[]; result: Record<string, unknown[][]> };
+  if (data.error?.length) throw new Error(`Kraken error: ${JSON.stringify(data.error)}`);
+  const key = Object.keys(data.result).find((k) => k !== 'last');
+  if (!key) throw new Error('Kraken: no pair data');
+  const candles = (data.result[key] as unknown[][]).slice(-limit);
+  // Kraken OHLC: [time, open, high, low, close, vwap, volume, count]
   return {
-    closes: data.map((x) => parseFloat(x[4] as string)),
-    highs: data.map((x) => parseFloat(x[2] as string)),
-    lows: data.map((x) => parseFloat(x[3] as string)),
-    volumes: data.map((x) => parseFloat(x[5] as string)),
+    closes: candles.map((c) => parseFloat(c[4] as string)),
+    highs: candles.map((c) => parseFloat(c[2] as string)),
+    lows: candles.map((c) => parseFloat(c[3] as string)),
+    volumes: candles.map((c) => parseFloat(c[6] as string)),
   };
 }
 
@@ -31,10 +48,9 @@ export interface LiveCryptoPrice {
 
 export async function fetchLiveCryptoPrice(symbol: string): Promise<LiveCryptoPrice | null> {
   try {
-    let binanceSym = symbol.toUpperCase().replace(/[/-]/g, '');
-    if (!binanceSym.endsWith('USDT')) binanceSym += 'USDT';
+    const cleanSymbol = symbol.toUpperCase().replace('/USDT', '').replace('USDT', '');
     const [{ closes, highs, lows, volumes }, usdInr] = await Promise.all([
-      getBinanceKlines(binanceSym, '1h', 200),
+      getKrakenKlines(cleanSymbol, 60, 720),
       getLiveUsdInr(),
     ]);
     const ema50 = ema(closes, 50);
@@ -52,7 +68,7 @@ export async function fetchLiveCryptoPrice(symbol: string): Promise<LiveCryptoPr
     const score = (trendScore + momentumScore) / 2;
     const signal = score >= 75 ? 'STRONG_BUY' : score >= 60 ? 'BUY' : score >= 40 ? 'NEUTRAL' : score >= 25 ? 'SELL' : 'STRONG_SELL';
     return {
-      symbol: symbol.toUpperCase(),
+      symbol: cleanSymbol,
       price_usd: round(current, 6), price_inr: round(current * usdInr, 2),
       high_24h_usd: round(high24h, 6), low_24h_usd: round(low24h, 6),
       change_24h_pct: round(change24h, 2),
@@ -67,10 +83,10 @@ export async function fetchLiveCryptoPrice(symbol: string): Promise<LiveCryptoPr
       pivot_points: pivotPoints(highs.at(-1) ?? 0, lows.at(-1) ?? 0, closes.at(-1) ?? 0),
       trend_score: round(trendScore, 2), momentum_score: round(momentumScore, 2),
       overall_score: round(score, 2),
-      signal, source: 'binance',
+      signal, source: 'kraken',
     };
   } catch (e) {
-    console.error(`Binance fetch failed for ${symbol}`, e);
+    console.error(`Kraken fetch failed for ${symbol}`, e);
     return null;
   }
 }
