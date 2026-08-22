@@ -32,7 +32,7 @@ const Sidebar = () => {
       {/* 🔥 MOBILE TOGGLE BUTTON */}
       <button
         onClick={() => setOpen(true)}
-        className="md:hidden fixed top-4 left-4 z-50 bg-primary text-white p-2 rounded-lg shadow-lg"
+        className="md:hidden fixed top-3 left-3 z-50 bg-primary text-white p-2 rounded-lg shadow-lg active:scale-95 transition-transform"
       >
         <Menu className="w-5 h-5" />
       </button>

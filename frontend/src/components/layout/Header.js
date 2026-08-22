@@ -8,7 +8,7 @@ const Header = ({ title }) => {
 
   return (
     <header className="flex items-center justify-between mb-8" data-testid="page-header">
-      <h1 className="text-3xl md:text-4xl lg:text-5xl font-extrabold tracking-tight" data-testid="page-title">
+      <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-extrabold tracking-tight" data-testid="page-title">
         {title}
       </h1>
       <Button

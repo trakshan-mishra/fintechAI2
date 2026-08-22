@@ -90,3 +90,77 @@ img, video {
   h1 { font-size: 1.5rem; }
   h2 { font-size: 1.25rem; }
 }
+
+/* ── Mobile optimizations ─────────────────────────────────────────────────── */
+
+/* Safe area insets for notched phones */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-bottom-nav {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Prevent text size adjustment on orientation change */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Better touch targets on mobile */
+@media (max-width: 768px) {
+  button, a {
+    min-height: 36px;
+  }
+
+  /* Reduce padding on cards */
+  .glass, .glass-strong {
+    border-radius: 0.75rem;
+  }
+
+  /* Prevent input zoom on iOS */
+  input, select, textarea {
+    font-size: 16px;
+  }
+
+  /* Smaller grid gaps on mobile */
+  .grid {
+    gap: 0.75rem;
+  }
+
+  /* Tabs scroll horizontally on mobile */
+  [role="tablist"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  [role="tablist"]::-webkit-scrollbar {
+    display: none;
+  }
+
+  [role="tab"] {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Better scrollbar on desktop */
+@media (min-width: 769px) {
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 3px;
+  }
+}
