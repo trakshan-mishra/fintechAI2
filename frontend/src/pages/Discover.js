@@ -88,26 +88,64 @@ function SIPCalculator() {
   );
 }
 
-// ── Return Rate Comparison ───────────────────────────────────────────────────
-const RETURN_DATA = [
-  { name: 'Savings A/C', return: 3, color: '#94a3b8', risk: 'No risk', min: 0 },
-  { name: 'FD (Bank)', return: 6.5, color: '#60a5fa', risk: 'Very low', min: 1000 },
-  { name: 'PPF', return: 7.1, color: '#818cf8', risk: 'Very low', min: 500 },
-  { name: 'Nifty Index', return: 12, color: '#10b981', risk: 'Moderate', min: 500 },
-  { name: 'Large Cap MF', return: 14, color: '#34d399', risk: 'Moderate', min: 100 },
-  { name: 'Mid Cap MF', return: 17, color: '#fbbf24', risk: 'High', min: 100 },
-  { name: 'Small Cap MF', return: 20, color: '#f97316', risk: 'Very high', min: 100 },
-  { name: 'Gold', return: 9, color: '#eab308', risk: 'Low-moderate', min: 100 },
-  { name: 'Bitcoin', return: 45, color: '#f97316', risk: 'Extreme', min: 100 },
+// ── Return Rate Comparison (live data) ───────────────────────────────────────
+// Fixed-income rates are published rates (don't change intraday).
+// Crypto, gold, and stock returns are fetched live.
+const FIXED_RATES = [
+  { name: 'Savings A/C', return: 3, color: '#94a3b8', risk: 'No risk', live: false },
+  { name: 'FD (Bank)', return: 6.5, color: '#60a5fa', risk: 'Very low', live: false },
+  { name: 'PPF', return: 7.1, color: '#818cf8', risk: 'Very low', live: false },
 ];
 
 function ReturnComparison() {
   const [sip, setSip] = useState(5000);
+  const [liveData, setLiveData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [crypto, stocks, commodities] = await Promise.all([
+        fetchTopCrypto(3).catch(() => []),
+        api.getStockData().catch(() => ({ data: [] })),
+        api.getCommodityData().catch(() => ({ data: [] })),
+      ]);
+
+      const btc = crypto.find(c => c.symbol === 'btc');
+      const gold = commodities.data.find(c => c.symbol === 'GC=F');
+      const nifty = stocks.data.find(s => s.symbol === 'NIFTY');
+
+      setLiveData({
+        crypto: btc ? { return: Math.abs(btc.price_change_percentage_24h || 0), price: btc.current_price, live: true } : null,
+        gold: gold ? { return: Math.abs(gold.change_percent || 0), price: gold.price, live: true } : null,
+      });
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Merge fixed + live rates
+  const allRates = [
+    ...FIXED_RATES,
+    { name: 'Gold (24h)', return: liveData?.gold?.return || 9, color: '#eab308', risk: 'Low-moderate', live: true, price: liveData?.gold?.price },
+    { name: 'Bitcoin (24h)', return: liveData?.crypto?.return || 45, color: '#f97316', risk: 'Extreme', live: true, price: liveData?.crypto?.price },
+    // Long-term CAGR averages (for SIP comparison)
+    { name: 'Nifty Index', return: 12, color: '#10b981', risk: 'Moderate', live: false },
+    { name: 'Large Cap MF', return: 14, color: '#34d399', risk: 'Moderate', live: false },
+    { name: 'Mid Cap MF', return: 17, color: '#fbbf24', risk: 'High', live: false },
+    { name: 'Small Cap MF', return: 20, color: '#f97316', risk: 'Very high', live: false },
+  ];
+
+  const maxReturn = Math.max(...allRates.map(d => d.return));
+
   return (
     <Card className="glass">
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><TrendingUp className="w-5 h-5 text-primary" />Return Rate Comparison</CardTitle>
-        <p className="text-sm text-muted-foreground">Historical average annual returns (CAGR). Past performance doesn't guarantee future returns.</p>
+        <p className="text-sm text-muted-foreground">
+          {loading ? 'Loading live data...' : 'Live 24h returns for Gold & Bitcoin. Others are long-term historical CAGR averages.'}
+        </p>
       </CardHeader>
       <CardContent>
         <div className="mb-4 flex items-center gap-2">
@@ -116,22 +154,27 @@ function ReturnComparison() {
           <span className="text-sm text-muted-foreground">/month for 10 years</span>
         </div>
         <div className="space-y-2">
-          {RETURN_DATA.map(d => {
+          {allRates.map(d => {
             const { total } = sipCalculate(sip, 10, d.return);
-            const pct = (d.return / 45) * 100;
+            const pct = (d.return / maxReturn) * 100;
             return (
               <div key={d.name} className="flex items-center gap-3 p-2 rounded-lg hover:bg-accent/30 transition-colors">
                 <div className="w-32 shrink-0">
-                  <p className="text-sm font-medium">{d.name}</p>
+                  <p className="text-sm font-medium flex items-center gap-1">
+                    {d.name}
+                    {d.live && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+                  </p>
                   <p className="text-xs text-muted-foreground">{d.risk}</p>
                 </div>
                 <div className="flex-1 h-7 rounded-full bg-muted overflow-hidden relative">
                   <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: d.color }} />
-                  <span className="absolute inset-0 flex items-center justify-end pr-3 text-xs font-bold text-white">{d.return}%</span>
+                  <span className="absolute inset-0 flex items-center justify-end pr-3 text-xs font-bold text-white">
+                    {d.live ? `${d.return.toFixed(1)}% 24h` : `${d.return}%`}
+                  </span>
                 </div>
                 <div className="w-24 text-right shrink-0">
                   <p className="font-mono text-sm font-bold">₹{(total / 100000).toFixed(1)}L</p>
-                  <p className="text-xs text-muted-foreground">in 10y</p>
+                  <p className="text-xs text-muted-foreground">{d.live ? '10y @ rate' : 'in 10y'}</p>
                 </div>
               </div>
             );
@@ -142,40 +185,60 @@ function ReturnComparison() {
   );
 }
 
-// ── Best Fit Investments ─────────────────────────────────────────────────────
-const BEST_FIT = [
-  { id: 'safe', label: 'Conservative', desc: 'Capital protection, low risk', returns: '6-8%', color: 'text-blue-500', icon: PiggyBank, funds: [
-    { name: 'PPF / EPF', type: 'Govt scheme', return: '~7.1%' },
-    { name: 'Bank FD (5yr)', type: 'Fixed deposit', return: '~6.5%' },
-    { name: 'Liquid Funds', type: 'Debt MF', return: '~6-7%' },
-    { name: 'Nifty 50 Index Fund', type: 'Index MF', return: '~12%' },
-  ]},
-  { id: 'balanced', label: 'Balanced', desc: 'Growth + stability, moderate risk', returns: '10-14%', color: 'text-emerald-500', icon: Target, funds: [
-    { name: 'Parag Parikh Flexi Cap', type: 'Flexi Cap MF', return: '~15% (5yr CAGR)' },
-    { name: 'HDFC Mid-Cap Index', type: 'Mid Cap MF', return: '~17% (5yr CAGR)' },
-    { name: 'Nifty Next 50 ETF', type: 'Index ETF', return: '~13% (5yr CAGR)' },
-    { name: 'SBI Small Cap', type: 'Small Cap MF', return: '~20% (5yr CAGR)' },
-  ]},
-  { id: 'aggressive', label: 'Aggressive', desc: 'High growth, high risk', returns: '15-25%+', color: 'text-orange-500', icon: Rocket, funds: [
-    { name: 'Nifty Small Cap 250', type: 'Small Cap Index', return: '~18% (5yr CAGR)' },
-    { name: 'Motilal Nasdaq 100', type: 'International FoF', return: '~20% (5yr CAGR)' },
-    { name: 'Bitcoin (small alloc)', type: 'Crypto', return: '~45% (high vol)' },
-    { name: 'Sectoral: IT / Pharma', type: 'Sectoral MF', return: '~15-25%' },
-  ]},
+// ── Best Fit Investments (AI-powered, dynamic) ───────────────────────────────
+const RISK_PROFILES = [
+  { id: 'safe', label: 'Conservative', desc: 'Capital protection, low risk', color: 'text-blue-500', icon: PiggyBank, prompt: 'Conservative investor in India. Suggest 4 specific low-risk investment options with current returns. Include govt schemes, FDs, and debt funds. Format as: name | type | current return' },
+  { id: 'balanced', label: 'Balanced', desc: 'Growth + stability, moderate risk', color: 'text-emerald-500', icon: Target, prompt: 'Balanced investor in India. Suggest 4 specific moderate-risk mutual funds and index funds with their 5-year CAGR. Format as: name | type | 5yr CAGR' },
+  { id: 'aggressive', label: 'Aggressive', desc: 'High growth, high risk', color: 'text-orange-500', icon: Rocket, prompt: 'Aggressive investor in India. Suggest 4 high-growth investment options including small-cap funds, sectoral funds, and crypto. Include current returns. Format as: name | type | return' },
 ];
 
 function BestFit() {
   const [profile, setProfile] = useState('balanced');
-  const active = BEST_FIT.find(f => f.id === profile);
+  const [funds, setFunds] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const active = RISK_PROFILES.find(f => f.id === profile);
+
+  const fetchFunds = useCallback(async (riskProfile) => {
+    const p = RISK_PROFILES.find(f => f.id === riskProfile);
+    if (!p) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: p.prompt }),
+      });
+      const data = await res.json();
+      // Parse the AI response into structured items
+      const lines = (data.response || '').split('\n').filter(l => l.includes('|') || l.includes('-'));
+      const parsed = lines.slice(0, 6).map(line => {
+        const parts = line.split(/[|｜-]/).map(s => s.trim()).filter(Boolean);
+        return {
+          name: parts[0]?.replace(/^\d+\.\s*/, '').replace(/[*#]/g, '') || line.slice(0, 40),
+          type: parts[1] || 'Investment',
+          return: parts[2] || '—',
+        };
+      }).filter(f => f.name.length > 2);
+
+      setFunds(parsed.length > 0 ? parsed : [{ name: 'AI suggestion unavailable', type: 'Try refreshing', return: '' }]);
+    } catch {
+      setFunds([{ name: 'Unable to fetch suggestions', type: 'Please try again', return: '' }]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchFunds(profile); }, [profile, fetchFunds]);
+
   return (
     <Card className="glass">
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><Award className="w-5 h-5 text-primary" />Best Fit For You</CardTitle>
-        <p className="text-sm text-muted-foreground">Curated investment ideas based on your risk profile.</p>
+        <p className="text-sm text-muted-foreground">AI-powered investment ideas based on your risk profile.</p>
       </CardHeader>
       <CardContent>
         <div className="flex gap-2 mb-4 flex-wrap">
-          {BEST_FIT.map(f => {
+          {RISK_PROFILES.map(f => {
             const Icon = f.icon;
             return (
               <button key={f.id} onClick={() => setProfile(f.id)}
@@ -187,18 +250,23 @@ function BestFit() {
         </div>
         <div className="mb-3 p-3 rounded-xl bg-muted/30">
           <p className={`text-sm font-bold ${active.color}`}>{active.desc}</p>
-          <p className="text-xs text-muted-foreground">Expected returns: {active.returns}</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {active.funds.map((f, i) => (
-            <div key={i} className="p-3 rounded-xl glass-strong hover:border-primary/50 transition-all cursor-pointer">
-              <p className="font-semibold text-sm">{f.name}</p>
-              <p className="text-xs text-muted-foreground">{f.type}</p>
-              <p className="font-mono text-sm text-emerald-500 mt-1">{f.return}</p>
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground mt-3">Returns are historical averages. Not a recommendation. Mutual fund investments are subject to market risks.</p>
+        {loading ? (
+          <div className="space-y-2">
+            {Array.from({length: 4}).map((_,i) => <div key={i} className="h-16 rounded-xl bg-muted animate-pulse" />)}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {funds.map((f, i) => (
+              <div key={i} className="p-3 rounded-xl glass-strong hover:border-primary/50 transition-all cursor-pointer">
+                <p className="font-semibold text-sm">{f.name}</p>
+                <p className="text-xs text-muted-foreground">{f.type}</p>
+                {f.return && <p className="font-mono text-sm text-emerald-500 mt-1">{f.return}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground mt-3">AI-generated suggestions. Not a recommendation. Verify with SEBI/AMFI before investing. Mutual fund investments are subject to market risks.</p>
       </CardContent>
     </Card>
   );

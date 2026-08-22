@@ -144,6 +144,7 @@ const CoinDetail = () => {
     const navigate = useNavigate();
     const { user, loading, getAuthToken } = useAuth();
     const [coin, setCoin] = useState(null);
+    const [livePrice, setLivePrice] = useState(null);
     const [loadingCoin, setLoadingCoin] = useState(true);
     const [prediction, setPrediction] = useState(null);
     const [loadingPrediction, setLoadingPrediction] = useState(false);
@@ -151,6 +152,7 @@ const CoinDetail = () => {
 
     useEffect(() => { if (!loading && !user) navigate('/sign-in'); }, [user, loading, navigate]);
 
+    // Fetch coin metadata (description, images, links)
     const fetchCoin = useCallback(async () => {
         try {
             setLoadingCoin(true);
@@ -167,7 +169,27 @@ const CoinDetail = () => {
         }
     }, [coinId]);
 
-    useEffect(() => { if (user) fetchCoin(); }, [user, fetchCoin]);
+    // Fetch live price from /coins/markets (same source as Markets page — consistent)
+    const fetchLivePrice = useCallback(async () => {
+        try {
+            const res = await fetch(
+                `${COINGECKO}/coins/markets?vs_currency=inr&ids=${coinId}&sparkline=false&price_change_percentage=24h`
+            );
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.length > 0) setLivePrice(data[0]);
+        } catch {}
+    }, [coinId]);
+
+    useEffect(() => { if (user) { fetchCoin(); fetchLivePrice(); } }, [user, fetchCoin, fetchLivePrice]);
+
+    // Auto-refresh live price every 30s
+    useEffect(() => {
+        if (!user) return;
+        const i = setInterval(fetchLivePrice, 30000);
+        return () => clearInterval(i);
+    }, [user, fetchLivePrice]);
+
     const fetchPrediction = async () => {
         if (loadingPrediction) return;
         setLoadingPrediction(true);
@@ -190,9 +212,14 @@ const CoinDetail = () => {
     if (!coin) return null;
 
     const m = coin?.market_data || {};
-    const price = m?.current_price?.inr ?? 0;
-    const change24h = m?.price_change_percentage_24h ?? 0;
-    const priceUSD = m?.current_price?.usd ?? 0;
+    // Use livePrice (from /coins/markets — same as Markets page) if available, fall back to coin data
+    const price = livePrice?.current_price ?? m?.current_price?.inr ?? 0;
+    const change24h = livePrice?.price_change_percentage_24h ?? m?.price_change_percentage_24h ?? 0;
+    const priceUSD = livePrice ? (livePrice.current_price / 95.75) : (m?.current_price?.usd ?? 0);
+    const high24h = livePrice?.high_24h ?? m?.high_24h?.inr ?? 0;
+    const low24h = livePrice?.low_24h ?? m?.low_24h?.inr ?? 0;
+    const marketCap = livePrice?.market_cap ?? m?.market_cap?.inr ?? 0;
+    const totalVolume = livePrice?.total_volume ?? m?.total_volume?.inr ?? 0;
     const isUp = change24h >= 0;
 
     const TABS = [
@@ -249,10 +276,10 @@ const CoinDetail = () => {
 
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-                <StatCard label="24H High" value={`₹${(m?.high_24h?.inr || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} color="text-emerald-500" />
-                <StatCard label="24H Low" value={`₹${(m?.low_24h?.inr || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} color="text-rose-500" />
-                <StatCard label="Market Cap" value={`₹${((m?.market_cap?.inr || 0) / 1e9).toFixed(1)}B`} />
-                <StatCard label="24H Volume" value={`₹${((m?.total_volume?.inr || 0) / 1e9).toFixed(1)}B`} />
+                <StatCard label="24H High" value={`₹${high24h.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} color="text-emerald-500" />
+                <StatCard label="24H Low" value={`₹${low24h.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} color="text-rose-500" />
+                <StatCard label="Market Cap" value={`₹${(marketCap / 1e9).toFixed(1)}B`} />
+                <StatCard label="24H Volume" value={`₹${(totalVolume / 1e9).toFixed(1)}B`} />
                 <StatCard label="USD Price" value={`$${priceUSD.toLocaleString('en-US', { maximumFractionDigits: 4 })}`} />
                 <StatCard label="All Time High" value={`₹${(m?.ath?.inr || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} />
                 <StatCard label="ATH Change" value={`${(m?.ath_change_percentage?.inr || 0).toFixed(1)}%`} color={(m?.ath_change_percentage?.inr || 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'} />
