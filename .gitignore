@@ -100,3 +100,4 @@ frontend/node_modules/.cache/default-development/4.pack
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+worker/.wrangler/
