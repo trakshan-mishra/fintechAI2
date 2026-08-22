@@ -20,7 +20,7 @@ Institutional-style market intelligence and personal finance platform built for 
 - **AI Chat** — Context-aware financial assistant with real-time web search
 - **Receipt Scanner** — OCR-powered receipt parsing
 
-### Discover (Groww-style)
+### Discover 
 - **SIP Calculator** — Interactive with growth chart
 - **Return Rate Comparison** — FD, PPF, mutual funds, gold, crypto with 10-year projections
 - **Best Fit** — Curated investment ideas by risk profile (conservative / balanced / aggressive)
