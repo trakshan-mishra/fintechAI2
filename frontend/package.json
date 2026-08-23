@@ -85,7 +85,6 @@
   "devDependencies": {
     "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
     "@craco/craco": "^7.1.0",
-    "@REMOVED/visual-edits": "https://assets.example.com/npm/REMOVED-visual-edits-1.0.8.tgz",
     "@eslint/js": "9.23.0",
     "ajv": "^7.2.4",
     "autoprefixer": "^10.4.20",

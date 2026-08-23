@@ -106,7 +106,7 @@ async def initiate_paytm_payment(order_id: str, amount: float, customer_id: str)
             "INDUSTRY_TYPE_ID": os.getenv("PAYTM_INDUSTRY_TYPE", "Retail"),
             "CHANNEL_ID": os.getenv("PAYTM_CHANNEL_ID", "WEB"),
             "ORDER_ID": order_id, "CUST_ID": customer_id, "TXN_AMOUNT": str(amount),
-            "CALLBACK_URL": "https://crypto-tracker-172.preview.example.com/api/paytm/callback"
+            "CALLBACK_URL": os.getenv("PAYTM_CALLBACK_URL", "https://example.com/api/paytm/callback")
         }
         checksum = generate_paytm_checksum(params, merchant_key)
         params["CHECKSUMHASH"] = checksum
@@ -465,7 +465,7 @@ async def initiate_paytm_payment(order_id: str, amount: float, customer_id: str)
             "ORDER_ID": order_id,
             "CUST_ID": customer_id,
             "TXN_AMOUNT": str(amount),
-            "CALLBACK_URL": "https://crypto-tracker-172.preview.example.com/api/paytm/callback"
+            "CALLBACK_URL": os.getenv("PAYTM_CALLBACK_URL", "https://example.com/api/paytm/callback")
         }
         
         checksum = generate_paytm_checksum(params, merchant_key)

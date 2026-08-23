@@ -26,13 +26,13 @@ Institutional-style market intelligence and personal finance platform built for 
 - **Trading Dashboard** — RSI, MACD, EMA, Bollinger Bands, Fibonacci, pivot points, signal scores (Kraken OHLC data)
 - **AI Predictions** — Per-asset analysis (crypto, stocks, commodities) using live data + Gemini + Google Search
 - **AI Chat** — Context-aware financial assistant with web search and chat history
-- **Receipt Scanner** — OCR-powered receipt parsing
+- **Receipt Scanner** — AI-powered receipt analysis (Gemini Vision)
 
 ### Finance
 - **Portfolio** — Holdings tracking with AI recommendations
 - **Transactions** — Income/expense tracking with category breakdown
 - **Invoices** — GST invoicing
-- **Tax Summary** — Tax calculations
+- **Tax Summary** — AI-assisted tax Q&A
 
 ### Mobile UX
 - Bottom navigation bar (Home, Discover, Markets, AI, Settings)

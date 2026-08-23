@@ -1267,11 +1267,6 @@
   resolved "https://registry.npmjs.org/@csstools/selector-specificity/-/selector-specificity-2.2.0.tgz"
   integrity sha512-+OJ9konv95ClSTOJCmMZqpd5+YGsB2S+x6w3E1oaM8UuR5j8nTNHYSz8c9BEPGDOCMQYIEEGlVPj/VY64iTbGw==
 
-"@REMOVED/visual-edits@https://assets.example.com/npm/REMOVED-visual-edits-1.0.8.tgz":
-  version "1.0.8"
-  resolved "https://assets.example.com/npm/REMOVED-visual-edits-1.0.8.tgz"
-  integrity sha512-n6vWWr/H8mUvuQqjtZzzGXUS6RDhcIIzT8VjX8EOFOk8sgoMjVoA9pFl6XG+wJuIOS7QAKK+QjiKipLHoVvbWA==
-
 "@eslint-community/eslint-utils@^4.2.0":
   version "4.9.1"
   resolved "https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.9.1.tgz"
